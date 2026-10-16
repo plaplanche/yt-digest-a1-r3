@@ -1,12 +1,14 @@
 import json
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from yt_digest_node import sponsorblock
 from yt_digest_node.cleaning import Cue, clean_cues
 from yt_digest_node.sponsorblock import fetch_segments, sponsor_ratio
 
@@ -19,7 +21,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         requests.append({"path": url.path, "query": parse_qs(url.query)})
         body = reply["body"].encode()
+        time.sleep(reply.get("delay", 0))
         self.send_response(reply["status"])
+        if "content_length" in reply:
+            self.send_header("Content-Length", str(reply["content_length"]))
         self.end_headers()
         self.wfile.write(body)
 
@@ -30,6 +35,7 @@ class Handler(BaseHTTPRequestHandler):
 @pytest.fixture
 def server() -> Iterator[str]:
     requests.clear()
+    reply.clear()
     httpd = HTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -62,6 +68,7 @@ def test_200_with_segments(server: str, capsys: pytest.CaptureFixture[str]) -> N
     ]
     line = log_line(capsys)
     assert line["event"] == "sponsorblock.call"
+    assert line["level"] == "info"
     assert line["video_id"] == "abc"
     assert line["request_id"] == "req-1"
     assert line["attrs"]["status"] == 200
@@ -74,6 +81,7 @@ def test_404_is_none(server: str, capsys: pytest.CaptureFixture[str]) -> None:
     result = fetch_segments(server, "abc")
     assert (result.state, result.segments) == ("none", [])
     line = log_line(capsys)
+    assert line["level"] == "info"
     assert line["attrs"]["status"] == 404
     assert line["attrs"]["segments"] == 0
 
@@ -82,7 +90,9 @@ def test_500_is_error(server: str, capsys: pytest.CaptureFixture[str]) -> None:
     reply.update(status=500, body="boom")
     result = fetch_segments(server, "abc")
     assert (result.state, result.segments) == ("error", [])
-    assert log_line(capsys)["attrs"]["status"] == 500
+    line = log_line(capsys)
+    assert line["level"] == "warn"
+    assert line["attrs"]["status"] == 500
 
 
 def test_malformed_200_is_error(
@@ -91,7 +101,9 @@ def test_malformed_200_is_error(
     reply.update(status=200, body="{not json")
     result = fetch_segments(server, "abc")
     assert (result.state, result.segments) == ("error", [])
-    assert log_line(capsys)["attrs"]["segments"] == 0
+    line = log_line(capsys)
+    assert line["level"] == "warn"
+    assert line["attrs"]["segments"] == 0
 
 
 def test_connection_refused_is_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -101,8 +113,33 @@ def test_connection_refused_is_error(capsys: pytest.CaptureFixture[str]) -> None
     result = fetch_segments(f"http://127.0.0.1:{port}", "abc")
     assert (result.state, result.segments) == ("error", [])
     line = log_line(capsys)
+    assert line["level"] == "warn"
     assert line["attrs"]["status"] == 0
     assert line["attrs"]["segments"] == 0
+
+
+def test_incomplete_read_is_error(
+    server: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reply.update(status=200, body="[]", content_length=500)
+    result = fetch_segments(server, "abc")
+    assert (result.state, result.segments) == ("error", [])
+    line = log_line(capsys)
+    assert line["event"] == "sponsorblock.call"
+    assert line["level"] == "warn"
+    assert line["attrs"]["segments"] == 0
+
+
+def test_timeout_is_error(
+    server: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sponsorblock, "TIMEOUT_S", 0.2)
+    reply.update(status=200, body="[]", delay=1)
+    result = fetch_segments(server, "abc")
+    assert (result.state, result.segments) == ("error", [])
+    line = log_line(capsys)
+    assert line["level"] == "warn"
+    assert line["attrs"]["status"] == 0
 
 
 def test_ratio_without_segment_is_zero() -> None:
@@ -120,7 +157,8 @@ def test_ratio_clips_to_duration() -> None:
     assert sponsor_ratio([(-10, 10)], 100) == 0.1
 
 
-def test_midpoint_rule_edges() -> None:
+def test_fetched_segments_cut_cues_by_midpoint(server: str) -> None:
+    reply.update(status=200, body=json.dumps([{"segment": [1, 3]}]))
+    result = fetch_segments(server, "abc")
     cues = [Cue(0, 2, ["a"]), Cue(4, 6, ["b"])]  # midpoints 1 and 5
-    assert clean_cues(cues, [(1.0, 3.0)]) == ["b"]  # start inclusive
-    assert clean_cues(cues, [(0.0, 1.0)]) == ["a", "b"]  # end exclusive
+    assert clean_cues(cues, result.segments) == ["b"]

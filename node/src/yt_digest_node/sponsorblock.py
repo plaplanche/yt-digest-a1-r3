@@ -1,5 +1,6 @@
 """SponsorBlock client and sponsor ratio (spec 5.3)."""
 
+import http.client
 import json
 import time
 import urllib.error
@@ -47,7 +48,7 @@ def fetch_segments(
             body = response.read()
     except urllib.error.HTTPError as error:
         status = error.code
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
         status = 0
     segments: list[tuple[float, float]] = []
     state: State = "error"
