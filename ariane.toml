@@ -1,0 +1,49 @@
+[project]
+base_branch = "main"
+
+[tracker]
+kind = "github"
+repository = "plaplanche/yt-digest-a1-r3"
+token_env = "GH_TOKEN"
+ready_label = "ariane"
+
+[agents.implementer]
+runtime = "claude-code"
+model = "claude-sonnet-5-5"
+tools = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
+max_budget_usd = 5.0
+timeout_minutes = 30
+
+[agents.reviewer]
+runtime = "claude-code"
+model = "claude-opus-5-5"
+tools = ["Read", "Glob", "Grep"]
+max_budget_usd = 3.0
+timeout_minutes = 20
+
+[[checks]]
+name = "lint"
+command = ["./scripts/check.sh", "lint"]
+
+[[checks]]
+name = "contracts"
+command = ["./scripts/check.sh", "contracts"]
+
+[[checks]]
+name = "test-node"
+command = ["./scripts/check.sh", "test-node"]
+
+[[checks]]
+name = "test-worker"
+command = ["./scripts/check.sh", "test-worker"]
+
+[definition_of_done]
+items = [
+  { check = "lint" },
+  { check = "contracts" },
+  { check = "test-node" },
+  { check = "test-worker" },
+  { text = "The change does what the ticket and spec/lot-1.md say, and nothing more." },
+  { text = "The change is covered by tests that fail without it." },
+  { text = "Every choice the spec leaves open is written down in docs/decisions.md." },
+]
