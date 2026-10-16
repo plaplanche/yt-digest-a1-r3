@@ -39,7 +39,7 @@ def parse_vtt(text: str) -> list[Cue]:
     """Parse VTT text into cues; header, NOTE, STYLE and REGION blocks and cue settings are ignored."""
     cues: list[Cue] = []
     for block in re.split(
-        r"\n[ \t]*\n", text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+        r"\n[ \t]*\n", text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     ):
         lines = block.strip("\n").split("\n")
         if not lines or _is_ignored(lines[0]):

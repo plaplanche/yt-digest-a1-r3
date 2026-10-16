@@ -47,15 +47,29 @@ def test_auto_rolling_duplicates_and_inline_tags() -> None:
 
 def test_annotations_removed_and_entities_decoded() -> None:
     (paragraph,) = clean_cues(load("annotations"), [])
-    assert "[" not in paragraph
-    assert paragraph.startswith("Tom & Jerry are here 5 < 6 > 4 and")
-    assert paragraph.endswith("more spaces bold under")
+    assert paragraph == "Tom & Jerry are here 5 < 6 > 4 and more spaces bold under"
 
 
 def test_empty_cue_does_not_bridge_gap() -> None:
-    # The final [Applause] cue is empty once cleaned, so it is not a kept cue.
-    paragraphs = clean_cues(load("annotations"), [])
-    assert len(paragraphs) == 1
+    # The gap is measured from the previous kept cue: [Music] is empty once cleaned.
+    cues = [Cue(0, 1, ["a"]), Cue(2, 2.5, ["[Music]"]), Cue(3.5, 4, ["b"])]
+    assert clean_cues(cues, []) == ["a", "b"]
+
+
+def test_bom_is_accepted() -> None:
+    assert parse_vtt("\ufeffWEBVTT\n\n00:00.000 --> 00:01.000\nhi\n") == [
+        Cue(0.0, 1.0, ["hi"])
+    ]
+
+
+def test_note_style_region_blocks_are_ignored() -> None:
+    text = (
+        "WEBVTT\n\nNOTE\n00:00.000 --> 00:01.000\nnote\n\n"
+        "STYLE\n00:00.000 --> 00:01.000\nstyle\n\n"
+        "REGION\n00:00.000 --> 00:01.000\nregion\n\n"
+        "00:02.000 --> 00:03.000\nreal\n"
+    )
+    assert parse_vtt(text) == [Cue(2.0, 3.0, ["real"])]
 
 
 def test_duplicate_line_dropped_across_cues() -> None:
