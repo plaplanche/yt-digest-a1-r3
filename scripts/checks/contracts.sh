@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Generated contracts are up to date; nothing to check until scripts/contracts.sh exists.
+# Generated contracts are up to date with contracts/*.schema.json.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-if [[ -x scripts/contracts.sh ]]; then
-  ./scripts/contracts.sh --check
-else
-  echo "scripts/contracts.sh does not exist yet: nothing to check"
-fi
+npm ci --prefix worker
+uv sync --locked --project node
+./scripts/contracts.sh --check
