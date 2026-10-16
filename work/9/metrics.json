@@ -1,0 +1,148 @@
+{
+  "attempts": {
+    "guard_violations": 0,
+    "pull_request": 0,
+    "push": 0
+  },
+  "blocking_red_at_delivery": 0,
+  "first_pass_verdict": "no-go",
+  "mode": "delivered",
+  "outcome": "delivered",
+  "rounds": 2,
+  "sessions": [
+    {
+      "cache_read_tokens": 106167,
+      "cache_write_tokens": 14459,
+      "cost_usd": 0.14214069999999998,
+      "duration_s": 93.757,
+      "input_tokens": 14,
+      "model": "claude-sonnet-5-5",
+      "output_tokens": 7366,
+      "role": "implementer",
+      "round": 0,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    },
+    {
+      "cache_read_tokens": 52663,
+      "cache_write_tokens": 17946,
+      "cost_usd": 0.24097259999999998,
+      "duration_s": 44.772,
+      "input_tokens": 8,
+      "model": "claude-opus-5-5",
+      "output_tokens": 4342,
+      "role": "reviewer",
+      "round": 0,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    },
+    {
+      "cache_read_tokens": 107225,
+      "cache_write_tokens": 22230,
+      "cost_usd": 0.1661865,
+      "duration_s": 78.841,
+      "input_tokens": 12,
+      "model": "claude-sonnet-5-5",
+      "output_tokens": 6652,
+      "role": "implementer",
+      "round": 1,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    },
+    {
+      "cache_read_tokens": 62461,
+      "cache_write_tokens": 21068,
+      "cost_usd": 0.2753082,
+      "duration_s": 48.795,
+      "input_tokens": 8,
+      "model": "claude-opus-5-5",
+      "output_tokens": 4712,
+      "role": "reviewer",
+      "round": 1,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    },
+    {
+      "cache_read_tokens": 70927,
+      "cache_write_tokens": 14948,
+      "cost_usd": 0.0938647,
+      "duration_s": 58.878,
+      "input_tokens": 10,
+      "model": "claude-sonnet-5-5",
+      "output_tokens": 2696,
+      "role": "implementer",
+      "round": 2,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    },
+    {
+      "cache_read_tokens": 92102,
+      "cache_write_tokens": 25642,
+      "cost_usd": 0.36001639999999996,
+      "duration_s": 70.951,
+      "input_tokens": 10,
+      "model": "claude-opus-5-5",
+      "output_tokens": 6821,
+      "role": "reviewer",
+      "round": 2,
+      "runtime": "claude-code",
+      "stop_reason": "finished"
+    }
+  ],
+  "started": "2026-10-16T22:34:35Z",
+  "steps": [
+    {
+      "at": "2026-10-16T22:34:35Z",
+      "name": "folder opened"
+    },
+    {
+      "at": "2026-10-16T22:36:08Z",
+      "name": "implementer session 1 stopped"
+    },
+    {
+      "at": "2026-10-16T22:36:45Z",
+      "name": "checks replayed"
+    },
+    {
+      "at": "2026-10-16T22:37:30Z",
+      "name": "reviewer session 2 stopped"
+    },
+    {
+      "at": "2026-10-16T22:37:32Z",
+      "name": "fix round 1 began"
+    },
+    {
+      "at": "2026-10-16T22:38:51Z",
+      "name": "implementer session 3 stopped"
+    },
+    {
+      "at": "2026-10-16T22:39:25Z",
+      "name": "checks replayed"
+    },
+    {
+      "at": "2026-10-16T22:40:14Z",
+      "name": "reviewer session 4 stopped"
+    },
+    {
+      "at": "2026-10-16T22:40:16Z",
+      "name": "fix round 2 began"
+    },
+    {
+      "at": "2026-10-16T22:41:15Z",
+      "name": "implementer session 5 stopped"
+    },
+    {
+      "at": "2026-10-16T22:41:56Z",
+      "name": "checks replayed"
+    },
+    {
+      "at": "2026-10-16T22:43:07Z",
+      "name": "reviewer session 6 stopped"
+    },
+    {
+      "at": "2026-10-16T22:43:09Z",
+      "name": "outcome: delivered"
+    }
+  ],
+  "ticket": 9
+}
