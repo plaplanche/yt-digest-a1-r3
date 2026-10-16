@@ -10,3 +10,7 @@
 2026-10-16: The schemas declare draft 2020-12, which is where `$defs` belongs; `--check` also reports generated files whose schema no longer exists.
 2026-10-16: The TypeScript side validates a transcript result at runtime with a small hand-written `parseTranscriptResult` (no JSON Schema library); the `test-node` check also runs `npm ci --prefix worker` because its `--check` tests use the worker tools.
 2026-10-16: The TypeScript logger checks the types of `attrs`, `request_id` and `video_id` at runtime, as the Python logger does through its model.
+2026-10-16: Segments are passed to `clean_cues` as a list of `(start, end)` tuples in seconds; the function returns the paragraphs as a list of strings (joining with `\n\n` is left to the caller).
+2026-10-16: A "kept cue" (step 5) is a cue that still has at least one line after steps 3 and 4; the gap is measured from the last such cue, and compared in whole milliseconds so that 1.9 s and 2.0 s are exact.
+2026-10-16: "The line kept just before" (step 4) is the last kept line across cues, not only within the cue.
+2026-10-16: A cue block is recognised by a `-->` timing line in its first two lines (an optional identifier comes first); blocks without one are ignored, and a leading BOM and CRLF line ends are accepted.
