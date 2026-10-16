@@ -4,6 +4,7 @@ import json
 import os
 import random
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,11 +21,9 @@ UNAVAILABLE_MARKERS = (
     "private video",
     "age-restricted",
     "confirm your age",
-    "video unavailable",
     "has been removed",
-    "this video is not available",
-    "account associated with this video has been terminated",
 )
+BLOCKED_STATUSES = (403, 429)
 BLOCKED_MARKERS = ("not a bot", "confirm you’re not a bot", "confirm you're not a bot")
 
 
@@ -42,7 +41,7 @@ class Extraction:
 
 
 class Extractor(Protocol):
-    def extract(self, video_id: str) -> Extraction | Failure: ...
+    def extract(self, video_id: str, langs: list[str]) -> Extraction | Failure: ...
 
 
 class FakeExtractor:
@@ -51,7 +50,7 @@ class FakeExtractor:
     def __init__(self, root: Path) -> None:
         self.root = root
 
-    def extract(self, video_id: str) -> Extraction | Failure:
+    def extract(self, video_id: str, langs: list[str]) -> Extraction | Failure:
         directory = self.root / video_id
         if not directory.is_dir():
             return "unavailable"
@@ -112,8 +111,8 @@ class YtDlpExtractor:
             "no_warnings": True,
         }
 
-    def extract(self, video_id: str) -> Extraction | Failure:
-        self.sleep(random.uniform(*self.delay))
+    def extract(self, video_id: str, langs: list[str]) -> Extraction | Failure:
+        self._pause()
         ydl_class = self.ydl_class or _default_ydl_class()
         try:
             with ydl_class(self.options()) as ydl:
@@ -127,20 +126,38 @@ class YtDlpExtractor:
             if any(marker in message for marker in UNAVAILABLE_MARKERS):
                 return "unavailable"
             raise
-        tracks: list[Track] = []
+        duration = float(info.get("duration") or 0)
         sources: list[tuple[str, TrackKind]] = [
             ("subtitles", "manual"),
             ("automatic_captions", "auto"),
         ]
+        # Candidates in the order of `choose_track`; only the first one that
+        # downloads is fetched, so the number of requests stays small.
         for field, kind in sources:
             by_lang: dict[str, list[dict[str, Any]]] = info.get(field) or {}
-            for lang, formats in by_lang.items():
-                vtt = next(
-                    (f for f in formats if f.get("ext") == "vtt" and f.get("url")), None
+            for lang in langs:
+                url = next(
+                    (
+                        f["url"]
+                        for f in by_lang.get(lang) or []
+                        if f.get("ext") == "vtt" and f.get("url")
+                    ),
+                    None,
                 )
-                if vtt is not None:
-                    tracks.append(Track(lang, kind, self.download(vtt["url"])))
-        return Extraction(float(info.get("duration") or 0), tracks)
+                if url is None:
+                    continue
+                self._pause()
+                try:
+                    vtt = self.download(url)
+                except urllib.error.HTTPError as error:
+                    if error.code in BLOCKED_STATUSES:
+                        return "blocked"
+                    raise
+                return Extraction(duration, [Track(lang, kind, vtt)])
+        return Extraction(duration, [])
+
+    def _pause(self) -> None:
+        self.sleep(random.uniform(*self.delay))
 
 
 def make_extractor(env: dict[str, str] | None = None) -> Extractor:
