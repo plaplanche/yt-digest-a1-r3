@@ -27,3 +27,6 @@
 2026-10-16: The command exits 2, through argparse, on an invalid video id and on an invalid `MAX_WORDS`, `PAGE_WORDS` or `FAKE_YTDLP_DIR` configuration (non-integer, below 1, or missing); `service.started` is logged once the configuration is valid.
 2026-10-16: SponsorBlock is only called when a track was chosen; the `fetch.transcript` attributes that do not apply (`source`, `words`, `pages`, `sponsor_ratio`, `sponsorblock`) are left out when the status is not `ok` or SponsorBlock failed; a track with no text left gives `ok` with no page and 0 words.
 2026-10-16: The command is `yt_digest_node.cli:main`, installed as the script `yt-digest-node`; end-to-end tests run it with `python -m yt_digest_node.cli`.
+2026-10-16: An exception raised by the extractor is not caught: the command exits 1 with a Python traceback on standard error and no `fetch.transcript` line.
+2026-10-16: `--langs` is split on commas, entries are stripped and empty ones dropped; an empty `--langs` falls back to `TRANSCRIPT_LANGS`, then `fr,en`; a list with no entry left gives `no_transcript`, not exit 2.
+2026-10-16: An invalid `YT_DELAY_SECONDS` is not checked by the command: the fake extractor ignores it, and the yt-dlp extractor raises `ValueError` (exit 1, as for any extractor exception).

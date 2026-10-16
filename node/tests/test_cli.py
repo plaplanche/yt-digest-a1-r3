@@ -38,8 +38,13 @@ def sponsorblock_url() -> Iterator[str]:
 
 
 def run(*args: str, url: str, **env: str) -> subprocess.CompletedProcess[str]:
+    inherited = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("TRANSCRIPT_LANGS", "MAX_WORDS", "PAGE_WORDS", "YT_DELAY_SECONDS")
+    }
     full = {
-        **os.environ,
+        **inherited,
         "FETCHER_FAKE_YTDLP": "1",
         "FAKE_YTDLP_DIR": str(FIXTURES),
         "SPONSORBLOCK_URL": url,
@@ -152,3 +157,55 @@ def test_invalid_config(sponsorblock_url: str) -> None:
     done = run("transcript", "sponsored01", url=sponsorblock_url, MAX_WORDS="abc")
     assert done.returncode == 2
     assert done.stdout == ""
+
+
+@pytest.mark.parametrize("name", ["MAX_WORDS", "PAGE_WORDS"])
+@pytest.mark.parametrize("value", ["0", "-3", "abc"])
+def test_invalid_word_limits(sponsorblock_url: str, name: str, value: str) -> None:
+    done = run("transcript", "sponsored01", url=sponsorblock_url, **{name: value})
+    assert done.returncode == 2
+    assert done.stdout == ""
+
+
+def test_missing_fake_dir(sponsorblock_url: str) -> None:
+    done = run("transcript", "sponsored01", url=sponsorblock_url, FAKE_YTDLP_DIR="")
+    assert done.returncode == 2
+    assert done.stdout == ""
+
+
+def test_transcript_langs_env(sponsorblock_url: str) -> None:
+    done = run("transcript", "sponsored01", url=sponsorblock_url, TRANSCRIPT_LANGS="en")
+    assert json.loads(done.stdout)["status"] == "no_transcript"
+    done = run("transcript", "notrack0001", url=sponsorblock_url, TRANSCRIPT_LANGS="de")
+    result = json.loads(done.stdout)
+    assert (result["status"], result["lang"]) == ("ok", "de")
+
+
+def test_langs_option_wins_over_env(sponsorblock_url: str) -> None:
+    done = run(
+        "transcript",
+        "sponsored01",
+        "--langs",
+        "fr",
+        url=sponsorblock_url,
+        TRANSCRIPT_LANGS="en",
+    )
+    assert json.loads(done.stdout)["lang"] == "fr"
+
+
+def test_empty_langs_option_uses_env(sponsorblock_url: str) -> None:
+    done = run(
+        "transcript",
+        "sponsored01",
+        "--langs",
+        "",
+        url=sponsorblock_url,
+        TRANSCRIPT_LANGS="en",
+    )
+    assert json.loads(done.stdout)["status"] == "no_transcript"
+
+
+def test_blank_langs_entries_give_no_transcript(sponsorblock_url: str) -> None:
+    done = run("transcript", "sponsored01", "--langs", ", ,", url=sponsorblock_url)
+    assert done.returncode == 0
+    assert json.loads(done.stdout)["status"] == "no_transcript"
