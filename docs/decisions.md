@@ -14,3 +14,5 @@
 2026-10-16: A "kept cue" (step 5) is a cue that still has at least one line after steps 3 and 4; the gap is measured from the last such cue, and compared in whole milliseconds so that 1.9 s and 2.0 s are exact.
 2026-10-16: "The line kept just before" (step 4) is the last kept line across cues, not only within the cue.
 2026-10-16: A cue block is recognised by a `-->` timing line in its first two lines (an optional identifier comes first); blocks without one are ignored, and a leading BOM and CRLF line ends are accepted.
+2026-10-16: `fetch_segments(base_url, video_id, request_id=None)` returns segments as `(start, end)` tuples plus a state (`ok`, `none`, `error`); a 200 whose body is not the expected JSON counts as `error`; the call is logged at `info`, or `warn` on `error`, with `status`, `segments` and `duration_ms` in `attrs`.
+2026-10-16: `sponsor_ratio` returns 0 when the duration is not positive, and ignores segments that are empty once clipped; the cue cut of step 2 was already in `clean_cues`.
