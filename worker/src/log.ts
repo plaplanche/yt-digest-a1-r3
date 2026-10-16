@@ -24,6 +24,15 @@ export function log(event: LogEventName, fields: LogFields = {}): void {
   if (!Object.hasOwn(LEVELS, level)) {
     throw new Error(`unknown log level: ${String(level)}`);
   }
+  for (const key of ["request_id", "video_id"] as const) {
+    if (fields[key] !== undefined && typeof fields[key] !== "string") {
+      throw new Error(`log field ${key} must be a string`);
+    }
+  }
+  const attrs = fields.attrs;
+  if (attrs !== undefined && (typeof attrs !== "object" || attrs === null || Array.isArray(attrs))) {
+    throw new Error("log field attrs must be an object");
+  }
   const line: LogEvent = {
     ...fields,
     attrs: fields.attrs ?? {},

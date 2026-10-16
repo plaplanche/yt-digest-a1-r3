@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Generates TypeScript types and Pydantic models from contracts/*.schema.json.
+# Needs `npm ci --prefix worker` and `uv sync --locked --project node` done (the contracts check does; it then runs the tools with --no-sync).
 # With --check, regenerates into a temporary directory and exits 1 naming the stale files.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,11 +16,11 @@ generate() {
     stem=${name//-/_}
     {
       echo "// Generated from contracts/$name.schema.json by scripts/contracts.sh; do not edit."
-      npm exec --prefix worker -- json2ts --input "$PWD/$schema" --no-banner
+      npm exec --no --prefix worker -- json2ts --input "$PWD/$schema" --no-banner
     } >"$ts_out/$name.ts"
     {
       echo "# Generated from contracts/$name.schema.json by scripts/contracts.sh; do not edit."
-      uv run --locked --project node datamodel-codegen --input "$schema" --input-file-type jsonschema \
+      uv run --no-sync --project node datamodel-codegen --input "$schema" --input-file-type jsonschema \
         --output-model-type pydantic_v2.BaseModel --target-python-version 3.12 \
         --use-annotated --use-specialized-enum --disable-timestamp --disable-warnings --formatters ruff-format ruff-check
     } >"$py_out/$stem.py"
@@ -37,8 +38,12 @@ if [[ "${1:-}" == "--check" ]]; then
   for f in "$tmp"/py/*; do
     [[ -f $py_dir/$(basename "$f") ]] && cmp -s "$f" "$py_dir/$(basename "$f")" || stale+=("$py_dir/$(basename "$f")")
   done
+  for f in "$ts_dir"/*.ts "$py_dir"/*.py; do
+    [[ $(basename "$f") == __init__.py ]] && continue
+    [[ -f $tmp/ts/$(basename "$f") || -f $tmp/py/$(basename "$f") ]] || stale+=("$f")
+  done
   if ((${#stale[@]})); then
-    echo "stale generated files (run ./scripts/contracts.sh):" >&2
+    echo "stale or orphaned generated files (run ./scripts/contracts.sh):" >&2
     printf '  %s\n' "${stale[@]}" >&2
     exit 1
   fi

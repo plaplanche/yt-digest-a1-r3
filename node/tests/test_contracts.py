@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,23 +54,32 @@ def _copy_repo(tmp_path: Path) -> Path:
         shutil.copytree(ROOT / sub, repo / sub)
     (repo / "worker").mkdir(exist_ok=True)
     (repo / "node").mkdir(exist_ok=True)
-    # Reuse the installed tools of the real project.
+    # Reuse the installed tools of the real project (npm ci / uv sync then find them in place).
     (repo / "worker/node_modules").symlink_to(ROOT / "worker/node_modules")
     shutil.copy(ROOT / "worker/package.json", repo / "worker/package.json")
+    shutil.copy(ROOT / "worker/package-lock.json", repo / "worker/package-lock.json")
     shutil.copy(ROOT / "node/pyproject.toml", repo / "node/pyproject.toml")
     shutil.copy(ROOT / "node/uv.lock", repo / "node/uv.lock")
     return repo
+
+
+needs_tools = pytest.mark.skipif(
+    not (ROOT / "worker/node_modules/.bin/json2ts").exists(),
+    reason="worker/node_modules is not installed (run npm ci --prefix worker)",
+)
 
 
 def _check(repo: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(repo / "scripts/contracts.sh"), "--check"],
         check=False,
+        env={**os.environ, "UV_PROJECT_ENVIRONMENT": str(ROOT / "node/.venv")},
         capture_output=True,
         text=True,
     )
 
 
+@needs_tools
 def test_check_passes_then_fails_naming_the_edited_file(tmp_path: Path) -> None:
     repo = _copy_repo(tmp_path)
     assert _check(repo).returncode == 0
@@ -80,6 +90,7 @@ def test_check_passes_then_fails_naming_the_edited_file(tmp_path: Path) -> None:
     assert "worker/src/contracts/log-event.ts" in result.stderr
 
 
+@needs_tools
 def test_check_fails_when_a_schema_changes(tmp_path: Path) -> None:
     repo = _copy_repo(tmp_path)
     schema = repo / "contracts/log-event.schema.json"
@@ -90,3 +101,12 @@ def test_check_fails_when_a_schema_changes(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "log_event.py" in result.stderr
     assert "log-event.ts" in result.stderr
+
+
+@needs_tools
+def test_check_fails_on_an_orphaned_generated_file(tmp_path: Path) -> None:
+    repo = _copy_repo(tmp_path)
+    (repo / "worker/src/contracts/gone.ts").write_text("// orphan\n")
+    result = _check(repo)
+    assert result.returncode == 1
+    assert "worker/src/contracts/gone.ts" in result.stderr

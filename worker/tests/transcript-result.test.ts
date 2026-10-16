@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { parseTranscriptResult } from "../src/transcript-result";
 import type { TranscriptResult } from "../src/contracts/transcript-result";
 
 const valid: TranscriptResult = {
@@ -14,7 +15,6 @@ const valid: TranscriptResult = {
 
 // The TypeScript types are checked by `tsc --noEmit` (lint): each @ts-expect-error
 // fails the lint check if the generated type stops rejecting the line below it.
-// The pattern of video_id is not expressible in a type and is enforced by the node.
 test("the generated type accepts a valid result and rejects bad ones", () => {
   expect(valid.status).toBe("ok");
   // @ts-expect-error extra field
@@ -22,4 +22,11 @@ test("the generated type accepts a valid result and rejects bad ones", () => {
   // @ts-expect-error bad status
   const bad: TranscriptResult = { ...valid, status: "nope" };
   expect([extra, bad]).toHaveLength(2);
+});
+
+test("the runtime parser accepts a valid result and rejects bad ones", () => {
+  expect(parseTranscriptResult(valid)).toEqual(valid);
+  for (const change of [{ extra: 1 }, { video_id: "short" }, { video_id: "bad id!!!!!!" }, { status: "nope" }]) {
+    expect(() => parseTranscriptResult({ ...valid, ...change })).toThrow();
+  }
 });

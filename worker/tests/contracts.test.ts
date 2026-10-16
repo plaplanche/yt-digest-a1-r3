@@ -30,3 +30,9 @@ test("an unknown field or level throws", () => {
   expect(() => log("service.started", { color: "red" } as never)).toThrow(/unknown log field/);
   expect(() => log("service.started", { level: "loud" as never })).toThrow(/unknown log level/);
 });
+
+test("attrs and id fields of the wrong type throw", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(() => log("service.started", { attrs: "x" as never })).toThrow(/attrs/);
+  expect(() => log("service.started", { video_id: 3 as never })).toThrow(/video_id/);
+});
