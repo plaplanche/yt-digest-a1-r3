@@ -22,6 +22,7 @@ UNAVAILABLE_MARKERS = (
     "age-restricted",
     "confirm your age",
     "has been removed",
+    "account associated with this video has been terminated",
 )
 BLOCKED_STATUSES = (403, 429)
 BLOCKED_MARKERS = ("not a bot", "confirm you’re not a bot", "confirm you're not a bot")

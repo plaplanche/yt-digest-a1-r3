@@ -56,12 +56,17 @@ def test_fake_without_meta_is_empty_ok() -> None:
     assert len(result.tracks) == 1
 
 
-def test_fake_extractor_never_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fail(_: float) -> None:
-        raise AssertionError("slept")
-
-    monkeypatch.setattr("time.sleep", fail)
-    FakeExtractor(FIXTURES).extract("mixed", LANGS)
+def test_fake_ignores_delay_setting() -> None:
+    # an invalid delay would raise if it were parsed for the fake extractor
+    extractor = make_extractor(
+        {
+            "FETCHER_FAKE_YTDLP": "1",
+            "FAKE_YTDLP_DIR": str(FIXTURES),
+            "YT_DELAY_SECONDS": "fast",
+        }
+    )
+    assert isinstance(extractor, FakeExtractor)
+    assert isinstance(extractor.extract("mixed", LANGS), Extraction)
 
 
 def test_invalid_delay_raises() -> None:
@@ -221,6 +226,13 @@ def test_ytdlp_other_http_error_is_raised() -> None:
             "unavailable",
         ),
         ("ERROR: [youtube] abc: This video has been removed", "unavailable"),
+        (
+            (
+                "ERROR: [youtube] abc: This video is no longer available because the"
+                " YouTube account associated with this video has been terminated."
+            ),
+            "unavailable",
+        ),
         ("ERROR: [youtube] abc: Sign in to confirm you’re not a bot", "blocked"),
         ("ERROR: [youtube] abc: Sign in to confirm you're not a bot", "blocked"),
     ],
@@ -242,3 +254,19 @@ def test_ytdlp_unknown_error_is_raised() -> None:
     StubYdl.error = Exception("boom")
     with pytest.raises(Exception, match="boom"):
         stub_extractor([]).extract("abc", ["en"])
+
+
+def test_ytdlp_and_choose_track_agree() -> None:
+    StubYdl.error = None
+    StubYdl.info = many_langs_info()
+    tracks = [
+        Track(lang, "manual", "")
+        for lang, formats in StubYdl.info["subtitles"].items()
+        for _ in formats[:1]
+    ] + [Track(lang, "auto", "") for lang in StubYdl.info["automatic_captions"]]
+    for langs in (["fr", "en"], ["fr"], ["en", "fr"], ["de"]):
+        expected = choose_track(tracks, langs)
+        result = stub_extractor([]).extract("abc", langs)
+        assert isinstance(result, Extraction)
+        got = [(t.lang, t.kind) for t in result.tracks]
+        assert got == ([(expected.lang, expected.kind)] if expected else [])
