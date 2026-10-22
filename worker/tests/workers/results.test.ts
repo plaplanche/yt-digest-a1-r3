@@ -271,6 +271,26 @@ describe("POST /node/result, lease check", () => {
     expect(await job(VIDEO)).toMatchObject({ status: "done" });
   });
 
+  test("a revocation during the R2 write leaves no object and answers 409", async () => {
+    const one = await enroll("pi-1");
+    const two = await enroll("pi-2");
+    await enqueue(VIDEO);
+    const lease = await claimOne(one);
+    const put = env.TRANSCRIPTS.put.bind(env.TRANSCRIPTS);
+    const spy = vi.spyOn(env.TRANSCRIPTS, "put").mockImplementation(async (...args: Parameters<typeof put>) => {
+      await call("/ops/nodes/pi-1", { method: "DELETE", headers: OPS });
+      return put(...args);
+    });
+    const response = await post("/node/result", ok(lease.lease_id), one);
+    spy.mockRestore();
+    expect(response.status).toBe(409);
+    expect(await stored()).toBe(0);
+    expect(await leaseState(lease.lease_id)).toBe("revoked");
+    const next = await claimOne(two);
+    expect((await post("/node/result", ok(next.lease_id), two)).status).toBe(200);
+    expect(await stored()).toBe(1);
+  });
+
   test("the third expiry gives failed_video", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));

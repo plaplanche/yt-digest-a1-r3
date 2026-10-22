@@ -192,14 +192,30 @@ function validationFailure(outcome: string, transcript: TranscriptResult | null,
   return null;
 }
 
-async function storeTranscript(env: Env, node: Node, lease: Lease, transcript: TranscriptResult): Promise<void> {
-  const key = `transcripts/${lease.video_id}.json`;
-  if ((await env.TRANSCRIPTS.head(key)) !== null) return;
-  await env.TRANSCRIPTS.put(key, JSON.stringify(transcript), {
+const transcriptKey = (videoId: string): string => `transcripts/${videoId}.json`;
+
+// True when this request wrote the object.
+async function storeTranscript(env: Env, node: Node, lease: Lease, transcript: TranscriptResult): Promise<boolean> {
+  const key = transcriptKey(lease.video_id);
+  if ((await env.TRANSCRIPTS.head(key)) !== null) return false;
+  const written = await env.TRANSCRIPTS.put(key, JSON.stringify(transcript), {
     httpMetadata: { contentType: "application/json" },
     customMetadata: { node_id: node.node_id, lease_id: lease.lease_id, produced_at: new Date().toISOString() },
     onlyIf: { etagDoesNotMatch: "*" },
   });
+  return written !== null;
+}
+
+// The lease ended (revoked, or answered by a conflicting result) during the write: section 8.4 step 2 says a stale
+// result writes nothing, so the object this request wrote is removed, if it is still the one it wrote.
+async function discardTranscript(env: Env, lease: Lease): Promise<void> {
+  const ended = await env.DB.prepare("SELECT state FROM leases WHERE lease_id = ?").bind(lease.lease_id).first<{ state: string }>();
+  if (ended?.state === "completed") return; // a copy of this same result won: the object is its own
+  const key = transcriptKey(lease.video_id);
+  const object = await env.TRANSCRIPTS.head(key);
+  if (object?.customMetadata?.lease_id === lease.lease_id) {
+    await env.TRANSCRIPTS.delete(key);
+  }
 }
 
 async function result(request: Request, env: Env, node: Node): Promise<Response> {
@@ -231,13 +247,14 @@ async function result(request: Request, env: Env, node: Node): Promise<Response>
     log("job.validation_failed", { level: "warn", video_id: lease.video_id, attrs: { node_id: node.node_id, reason } });
     return errorResponse(422, "validation_failed", `Result rejected: ${reason}`);
   }
+  let wrote = false;
   if (data.outcome === "ok") {
     const pinned = await pinLease(env, lease.lease_id, new Date(Date.now() + leaseSeconds(env) * 1000).toISOString());
     if (!pinned) {
       return lostRace(env, node, data.lease_id, "completed");
     }
     try {
-      await storeTranscript(env, node, lease, data.transcript!);
+      wrote = await storeTranscript(env, node, lease, data.transcript!);
     } catch {
       return errorResponse(503, "storage_error", "The transcript could not be stored");
     }
@@ -257,6 +274,7 @@ async function result(request: Request, env: Env, node: Node): Promise<Response>
     responseJson: JSON.stringify(answer),
   });
   if (!applied) {
+    if (wrote) await discardTranscript(env, lease).catch(() => undefined);
     return lostRace(env, node, data.lease_id, "completed");
   }
   log("job.completed", { video_id: lease.video_id, attrs: { node_id: node.node_id, outcome: data.outcome, status } });

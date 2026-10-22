@@ -72,3 +72,4 @@
 2026-10-22: `job.stale_result` is logged at level `warn`, with `video_id` when the lease exists; `job.validation_failed` likewise at `warn`.
 2026-10-22: Before its R2 write a result pushes the lease expiry to now + LEASE_SECONDS (`pinLease`, conditional on the lease being active and unexpired), so a concurrent sweep cannot expire it mid-write; a lease whose `expires_at` has passed is refused by the lease check, `completed`/`rejected` ends and releases even if the sweep has not run.
 2026-10-22: `claim` leases jobs only while the node is not revoked (the UPDATE checks `nodes.revoked_at` in the same statement), so a claim racing a revocation leases nothing.
+2026-10-22: A result that wrote to R2 but then lost its lease (revoked or answered by a conflicting result mid-write) deletes the object it wrote, if its metadata still names that lease, before answering 409, unless the lease was completed by a copy of the same result.
