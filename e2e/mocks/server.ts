@@ -11,9 +11,9 @@ const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
   if (req.method === "GET" && url.pathname === "/health") {
     send(res, 200, "application/json", JSON.stringify({ status: "ok" }));
-  } else if (req.method === "GET" && url.pathname === "/sponsorblock/api/skipSegments") {
-    send(res, 404, "text/plain; charset=utf-8", "Not Found");
   } else {
+    // Includes /sponsorblock/api/skipSegments: SponsorBlock answers 404 when a video has no segments.
+    // GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are passed by stack.sh but only read once the fake Google exists.
     send(res, 404, "text/plain; charset=utf-8", "Not Found");
   }
   console.log(`${req.method} ${url.pathname} -> ${res.statusCode}`);

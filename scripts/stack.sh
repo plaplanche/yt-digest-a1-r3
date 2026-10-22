@@ -30,6 +30,11 @@ down() {
   for name in worker mocks; do
     [[ -f $pids/$name ]] || continue
     pid=$(cat "$pids/$name")
+    # A stale pid file may name a reused pid: only signal a group that still runs our command.
+    if ! tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -e wrangler -e mocks/server.ts; then
+      rm -f "$pids/$name"
+      continue
+    fi
     # Each process runs in its own session, so its pid is its process group id.
     kill -TERM -- "-$pid" 2>/dev/null || true
     for _ in $(seq 50); do

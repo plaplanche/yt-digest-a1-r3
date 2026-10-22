@@ -39,7 +39,14 @@
 2026-10-22: Every `/ops/*` request is authenticated before routing, so an unknown `/ops` route or method is 401 without the operator bearer and 404 with it; the constant-time compare is done on the SHA-256 digests of both values.
 2026-10-22: `POST /ops/reset` deletes the rows in one D1 batch, then the R2 objects under `transcripts/` page by page; objects under other prefixes are kept.
 2026-10-22: `worker/` gains `@cloudflare/workers-types` and `@types/node` (dev) so `tsc` knows D1, R2 and `vitest.config.ts`; the Worker code itself uses no Node API.
-2026-10-22: The Worker's module exports only its handler (the placeholder `name` export is removed, with its test), because `workerd` refuses any other export on startup; `stack.sh` starts each process in its own session (`setsid`) so `down` can signal the whole group by its pid.
-2026-10-22: `stack.sh` detects a taken port by trying to connect to it with bash's `/dev/tcp`, runs `wrangler` from the repository root with `--config worker/wrangler.toml` (state in `.stack/state`), and passes every setting of section 5.2 with `--var`.
-2026-10-22: The mocks server answers any route other than the two of this ticket with a 404 `Not Found`; Playwright's `api` and `browser` projects are told apart by the file suffix (`*.api.spec.ts`, `*.browser.spec.ts`), and `e2e/` has its own ESLint flat config like `worker/`.
-2026-10-22: `e2e.sh` copies `.stack/logs/` and the Playwright report to `ci-artifacts/` (git-ignored) on failure; the Playwright report and results folders are git-ignored.
+2026-10-22: The Worker's module exports only its handler (the placeholder `name` export is removed, with its test), because `workerd` refuses any other export on startup.
+2026-10-22: `stack.sh` starts each process in its own session (`setsid`) so `down` can signal the whole group by its pid.
+2026-10-22: `down` signals a pid file's group only if `/proc/<pid>/cmdline` still names `wrangler` or the mocks server, so a reused pid is left alone.
+2026-10-22: `stack.sh` detects a taken port by trying to connect to it with bash's `/dev/tcp`.
+2026-10-22: `stack.sh` runs `wrangler` from the repository root with `--config worker/wrangler.toml` (state in `.stack/state`).
+2026-10-22: `stack.sh` passes every setting of section 5.2 to the Worker with `--var`.
+2026-10-22: The mocks server answers any route other than `/health` with a 404 `Not Found`, which is the SponsorBlock answer of this ticket.
+2026-10-22: Playwright's `api` and `browser` projects are told apart by the file suffix (`*.api.spec.ts`, `*.browser.spec.ts`).
+2026-10-22: `e2e/` has its own ESLint flat config like `worker/`.
+2026-10-22: `e2e.sh` copies `.stack/logs/` and the Playwright report to `ci-artifacts/` (git-ignored) from its EXIT trap whenever it fails, before the stack is stopped; the Playwright report and results folders are git-ignored.
+2026-10-22: `e2e.sh` also checks the `stack.sh` lifecycle after the Playwright run: taken port, repeated `down`, empty state after a second `up`.
