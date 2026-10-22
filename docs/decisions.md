@@ -30,3 +30,5 @@
 2026-10-16: An exception raised by the extractor is not caught: the command exits 1 with a Python traceback on standard error and no `fetch.transcript` line.
 2026-10-16: `--langs` is split on commas, entries are stripped and empty ones dropped; an empty `--langs` falls back to `TRANSCRIPT_LANGS`, then `fr,en`; a list with no entry left gives `no_transcript`, not exit 2.
 2026-10-16: An invalid `YT_DELAY_SECONDS` is not checked by the command: the fake extractor ignores it, and the yt-dlp extractor raises `ValueError` (exit 1, as for any extractor exception).
+2026-10-22: Contract tests in the Worker validate instances with ajv (2020-12 draft, a dev dependency), reading the schemas from `contracts/`; `tsconfig.json` gains `resolveJsonModule`.
+2026-10-22: A cross-file `$ref` in a schema is resolved by `scripts/contracts.sh` by swapping it for a marker in a temporary copy (needs `jq`) and importing the other schema's generated type, so the type is never duplicated.

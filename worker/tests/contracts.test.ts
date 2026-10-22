@@ -36,3 +36,10 @@ test("attrs and id fields of the wrong type throw", () => {
   expect(() => log("service.started", { attrs: "x" as never })).toThrow(/attrs/);
   expect(() => log("service.started", { video_id: 3 as never })).toThrow(/video_id/);
 });
+
+test("a lot 2 event is accepted", () => {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  log("job.claimed", { video_id: "dQw4w9WgXcQ", attrs: { node_id: "n1", attempt: 1, lease_seconds: 600 } });
+  const line = JSON.parse(String(spy.mock.calls[0]?.[0])) as Record<string, unknown>;
+  expect(line).toMatchObject({ event: "job.claimed", service: "worker", video_id: "dQw4w9WgXcQ" });
+});
