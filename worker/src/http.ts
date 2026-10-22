@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database;
   TRANSCRIPTS: R2Bucket;
   OPS_TOKEN?: string;
+  LEASE_SECONDS?: string;
 }
 
 export function json(body: unknown, status = 200): Response {

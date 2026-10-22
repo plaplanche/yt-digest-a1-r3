@@ -85,7 +85,7 @@ up() {
     ADMIN_EMAIL="$ADMIN_EMAIL" TOKEN_ENC_KEY="$TOKEN_ENC_KEY" ALLOWED_ORIGINS="$ALLOWED_ORIGINS"
   )
   local var_args=()
-  for v in "${vars[@]}"; do var_args+=(--var "$v"); done
+  for v in "${vars[@]}"; do var_args+=(--var "${v/=/:}"); done
   setsid npm exec --prefix worker -- wrangler dev --config worker/wrangler.toml --local --ip 127.0.0.1 \
     --port "$WORKER_PORT" --persist-to .stack/state "${var_args[@]}" >>"$stack/logs/worker.log" 2>&1 </dev/null &
   echo $! >"$pids/worker"

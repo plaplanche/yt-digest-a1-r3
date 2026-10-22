@@ -50,3 +50,12 @@
 2026-10-22: `e2e/` has its own ESLint flat config like `worker/`.
 2026-10-22: `e2e.sh` copies `.stack/logs/` and the Playwright report to `ci-artifacts/` (git-ignored) from its EXIT trap whenever it fails, before the stack is stopped; the Playwright report and results folders are git-ignored.
 2026-10-22: `e2e.sh` also checks the `stack.sh` lifecycle after the Playwright run: taken port, repeated `down`, empty state after a second `up`.
+2026-10-22: Request bodies of the Worker are checked by hand-written validators in `worker/src/validate.ts` that mirror the schemas, as `transcript-result.ts` does, because Ajv generates code and `workerd` forbids that.
+2026-10-22: An empty or non-JSON body of a `/node/*` or `/ops` POST is 400 `invalid_request`, even when every field is optional.
+2026-10-22: On `/node/*`, a route or method that does not exist is 404 before authentication; `/node/result` and `/node/release` are 404 until their ticket.
+2026-10-22: A claim is one D1 batch: an `UPDATE … WHERE (video_id, kind) IN (SELECT … ORDER BY … LIMIT) RETURNING` that leases the jobs, then an `INSERT OR IGNORE INTO leases … SELECT` from the jobs just leased by this node with this expiry; lease ids are `lease_` plus 32 hexadecimal characters from SQLite's `randomblob`.
+2026-10-22: `LEASE_SECONDS` unset or invalid falls back to 600.
+2026-10-22: `POST /ops/jobs` gives all the new jobs of a request the same `created_at`, so their order within a request is by `video_id`; a repeated id in one request is listed once in `enqueued` (or `existing`) and then in `existing`.
+2026-10-22: `job.enqueued` is logged once per `POST /ops/jobs` that creates at least one job, with the count of new jobs.
+2026-10-22: The expiry sweep of 8.6 is not run yet (expiry is the next ticket), so neither `/node/*` nor `GET /ops/jobs/<video_id>` sweeps.
+2026-10-22: `stack.sh` hands each setting to `wrangler dev --var` as `NAME:value`, the only form wrangler reads (with `=` the Worker received every setting empty).
