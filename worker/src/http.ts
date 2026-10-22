@@ -1,0 +1,23 @@
+import type { ErrorBody } from "./contracts/error";
+
+export interface Env {
+  DB: D1Database;
+  TRANSCRIPTS: R2Bucket;
+  OPS_TOKEN?: string;
+}
+
+export function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function errorResponse(status: number, code: string, message: string): Response {
+  const body: ErrorBody = { error: { code, message } };
+  return json(body, status);
+}
+
+export function notFound(): Response {
+  return errorResponse(404, "not_found", "Not found");
+}
