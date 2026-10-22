@@ -3,7 +3,7 @@ import type { NodeHeartbeatResponse } from "./contracts/node-heartbeat-response"
 import { sha256Hex } from "./hash";
 import { errorResponse, json, notFound, type Env } from "./http";
 import type { NodeJobAck } from "./contracts/node-job-ack";
-import { failureStatus, endLease, sweepExpired } from "./lease";
+import { failureStatus, endLease, pinLease, sweepExpired } from "./lease";
 import { log } from "./log";
 import { isClaimRequest, isHeartbeatRequest, isReleaseRequest, isResultRequest } from "./validate";
 import type { TranscriptResult } from "./contracts/transcript-result";
@@ -98,7 +98,8 @@ async function claim(request: Request, env: Env, node: Node): Promise<Response> 
       `UPDATE jobs SET status = 'leased', leased_by = ?1,
          lease_id = 'lease_' || lower(hex(randomblob(16))), lease_expires_at = ?2,
          attempts = attempts + 1, tried_nodes = json_insert(tried_nodes, '$[#]', ?1)
-       WHERE (video_id, kind) IN (
+       WHERE EXISTS (SELECT 1 FROM nodes WHERE node_id = ?1 AND revoked_at IS NULL)
+         AND (video_id, kind) IN (
          SELECT video_id, kind FROM jobs
          WHERE status = 'queued' AND NOT EXISTS (SELECT 1 FROM json_each(jobs.tried_nodes) WHERE value = ?1)
          ORDER BY priority DESC, created_at ASC, video_id ASC LIMIT ?3)
@@ -136,6 +137,7 @@ interface Lease {
   state: string;
   response_json: string | null;
   attempts: number;
+  expires_at: string;
 }
 
 const staleLease = (): Response => errorResponse(409, "stale_lease", "The lease is not the node's current lease");
@@ -144,7 +146,7 @@ const staleLease = (): Response => errorResponse(409, "stale_lease", "The lease 
 // answers again what it answered the first time.
 async function checkLease(env: Env, node: Node, leaseId: string, replay: "completed" | "released"): Promise<Lease | Response> {
   const lease = await env.DB.prepare(
-    `SELECT l.lease_id, l.video_id, l.node_id, l.state, l.response_json, j.attempts FROM leases l
+    `SELECT l.lease_id, l.video_id, l.node_id, l.state, l.response_json, l.expires_at, j.attempts FROM leases l
      LEFT JOIN jobs j ON j.video_id = l.video_id AND j.kind = 'primary' WHERE l.lease_id = ?`,
   )
     .bind(leaseId)
@@ -153,7 +155,7 @@ async function checkLease(env: Env, node: Node, leaseId: string, replay: "comple
     if (lease.state === replay && lease.response_json !== null) {
       return new Response(lease.response_json, { headers: { "Content-Type": "application/json" } });
     }
-    if (lease.state === "active") {
+    if (lease.state === "active" && lease.expires_at > new Date().toISOString()) {
       return lease;
     }
   }
@@ -230,6 +232,10 @@ async function result(request: Request, env: Env, node: Node): Promise<Response>
     return errorResponse(422, "validation_failed", `Result rejected: ${reason}`);
   }
   if (data.outcome === "ok") {
+    const pinned = await pinLease(env, lease.lease_id, new Date(Date.now() + leaseSeconds(env) * 1000).toISOString());
+    if (!pinned) {
+      return lostRace(env, node, data.lease_id, "completed");
+    }
     try {
       await storeTranscript(env, node, lease, data.transcript!);
     } catch {
@@ -269,9 +275,10 @@ async function release(request: Request, env: Env, node: Node): Promise<Response
   }
   const answer: NodeJobAck = { video_id: lease.video_id, status: "queued" };
   const [, job] = await env.DB.batch([
-    env.DB.prepare("UPDATE leases SET state = 'released', response_json = ?2 WHERE lease_id = ?1 AND state = 'active'").bind(
+    env.DB.prepare("UPDATE leases SET state = 'released', response_json = ?2 WHERE lease_id = ?1 AND state = 'active' AND expires_at > ?3").bind(
       lease.lease_id,
       JSON.stringify(answer),
+      new Date().toISOString(),
     ),
     env.DB.prepare(
       `UPDATE jobs SET status = 'queued', leased_by = NULL, lease_id = NULL, lease_expires_at = NULL,

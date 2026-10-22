@@ -29,7 +29,8 @@ export async function endLease(env: { DB: D1Database }, end: LeaseEnd): Promise<
   const statements = [
     env.DB.prepare(
       `UPDATE leases SET state = ?2, response_json = ?3 WHERE lease_id = ?1 AND state = 'active'
-         AND (?2 != 'expired' OR expires_at <= ?4)`,
+         AND (?2 != 'expired' OR expires_at <= ?4)
+         AND (?2 NOT IN ('completed', 'rejected') OR expires_at > ?4)`,
     ).bind(end.leaseId, end.leaseState, end.responseJson, now),
     env.DB.prepare(
       `UPDATE jobs SET status = ?3, done_at = ?4, last_outcome = ?5,
@@ -51,6 +52,22 @@ export async function endLease(env: { DB: D1Database }, end: LeaseEnd): Promise<
   }
   const results = await env.DB.batch(statements);
   return results[1]!.results.length > 0;
+}
+
+// Holds an active, unexpired lease until `until`, so that a sweep cannot expire it while its R2 write runs
+// (section 8.4 step 2: a stale lease writes nothing). False when the lease is no longer active.
+export async function pinLease(env: { DB: D1Database }, leaseId: string, until: string): Promise<boolean> {
+  const now = new Date().toISOString();
+  const [lease] = await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE leases SET expires_at = max(expires_at, ?2) WHERE lease_id = ?1 AND state = 'active' AND expires_at > ?3 RETURNING lease_id",
+    ).bind(leaseId, until, now),
+    env.DB.prepare(
+      `UPDATE jobs SET lease_expires_at = max(lease_expires_at, ?2) WHERE lease_id = ?1 AND status = 'leased'
+         AND EXISTS (SELECT 1 FROM leases WHERE lease_id = ?1 AND state = 'active' AND expires_at > ?3)`,
+    ).bind(leaseId, until, now),
+  ]);
+  return lease!.results.length > 0;
 }
 
 interface Held {

@@ -12,8 +12,8 @@ test("E2E-13: 2 nodes claim 6 jobs concurrently, each job is handed out once and
   expect(all).toHaveLength(6);
   expect(all.map((j) => j.video_id).sort()).toEqual(ids);
 
-  for (const [i, id] of ids.entries()) {
-    const found = await job(request, id);
+  const leased = await Promise.all(ids.map((id) => job(request, id)));
+  for (const [i, found] of leased.entries()) {
     expect(found.status).toBe("leased");
     expect(found.attempts).toBe(1);
     expect(found.tried_nodes as string[], String(i)).toHaveLength(1);

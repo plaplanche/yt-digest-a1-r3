@@ -70,3 +70,5 @@
 2026-10-22: The `reason` of `job.validation_failed` is one of `transcript_missing`, `transcript_not_null`, `status_mismatch`, `video_id_mismatch`, `pages_empty`, `word_count_mismatch`.
 2026-10-22: A `/node/result` or `/node/release` body whose `transcript` breaks the transcript-result schema is 400 `invalid_request`, before the lease check.
 2026-10-22: `job.stale_result` is logged at level `warn`, with `video_id` when the lease exists; `job.validation_failed` likewise at `warn`.
+2026-10-22: Before its R2 write a result pushes the lease expiry to now + LEASE_SECONDS (`pinLease`, conditional on the lease being active and unexpired), so a concurrent sweep cannot expire it mid-write; a lease whose `expires_at` has passed is refused by the lease check, `completed`/`rejected` ends and releases even if the sweep has not run.
+2026-10-22: `claim` leases jobs only while the node is not revoked (the UPDATE checks `nodes.revoked_at` in the same statement), so a claim racing a revocation leases nothing.

@@ -241,6 +241,36 @@ describe("POST /node/result, lease check", () => {
     await expectError(await post("/node/result", ok(lease.lease_id), token), 409, "stale_lease");
   });
 
+  test("a lease past its expiry that the sweep has not seen yet is refused", async () => {
+    const token = await enroll("pi-1");
+    await enqueue(VIDEO);
+    const lease = await claimOne(token);
+    await env.DB.prepare("UPDATE leases SET expires_at = '2000-01-01T00:00:00.000Z' WHERE lease_id = ?").bind(lease.lease_id).run();
+    await expectError(await post("/node/result", ok(lease.lease_id), token), 409, "stale_lease");
+    expect(await stored()).toBe(0);
+  });
+
+  test("a sweep running during the R2 write cannot expire the lease", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
+    const one = await enroll("pi-1");
+    const two = await enroll("pi-2");
+    await enqueue(VIDEO);
+    const lease = await claimOne(one);
+    vi.setSystemTime(new Date("2026-10-22T10:09:59.900Z"));
+    const put = env.TRANSCRIPTS.put.bind(env.TRANSCRIPTS);
+    const spy = vi.spyOn(env.TRANSCRIPTS, "put").mockImplementation(async (...args: Parameters<typeof put>) => {
+      vi.setSystemTime(new Date("2026-10-22T10:10:01.000Z"));
+      await post("/node/heartbeat", { version: "v", uptime_s: 0, jobs_in_progress: 0 }, two);
+      return put(...args);
+    });
+    const response = await post("/node/result", ok(lease.lease_id), one);
+    spy.mockRestore();
+    expect(response.status).toBe(200);
+    expect(await leaseState(lease.lease_id)).toBe("completed");
+    expect(await job(VIDEO)).toMatchObject({ status: "done" });
+  });
+
   test("the third expiry gives failed_video", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-22T10:00:00.000Z"));
@@ -271,7 +301,6 @@ describe("POST /node/result, validation", () => {
     ["a transcript of another video", (l) => ok(l, transcript("video000002"))],
     ["no pages", (l) => ok(l, transcript(VIDEO, { pages: [], word_count: 0 }))],
     ["a wrong word_count", (l) => ok(l, transcript(VIDEO, { word_count: 6 }))],
-    ["a word_count that counts the […] page", (l) => ok(l, transcript(VIDEO, { word_count: 6 }))],
     ["no_transcript with a transcript", (l) => ({ lease_id: l, outcome: "no_transcript", transcript: transcript() })],
     ["error with a transcript", (l) => ({ lease_id: l, outcome: "error", transcript: transcript() })],
   ];
@@ -376,6 +405,21 @@ describe("DELETE /ops/nodes/<node_id>", () => {
     const reassigned = await post("/node/claim", {}, two);
     expect((await reassigned.json<{ jobs: { video_id: string }[] }>()).jobs.map((j) => j.video_id).sort()).toEqual([VIDEO, "video000002"]);
     expect(await stored()).toBe(0);
+  });
+
+  test("a claim racing the revocation leaves no active lease", async () => {
+    const one = await enroll("pi-1");
+    await enqueue(VIDEO);
+    const batch = env.DB.batch.bind(env.DB);
+    const spy = vi.spyOn(env.DB, "batch").mockImplementationOnce(async (...args: Parameters<typeof batch>) => {
+      await revoke("pi-1");
+      return batch(...args);
+    });
+    const response = await post("/node/claim", {}, one);
+    spy.mockRestore();
+    expect((await response.json<{ jobs: unknown[] }>()).jobs).toEqual([]);
+    expect(await count("leases", "state = 'active'")).toBe(0);
+    expect(await job(VIDEO)).toMatchObject({ status: "queued", attempts: 0 });
   });
 
   test("is idempotent, 404 for an unknown node, and the third revocation gives failed_video", async () => {
