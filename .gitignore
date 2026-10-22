@@ -4,3 +4,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.stack/
+ci-artifacts/
+e2e/test-results/
+e2e/playwright-report/

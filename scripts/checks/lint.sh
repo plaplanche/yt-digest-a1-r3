@@ -12,5 +12,9 @@ npm ci --prefix worker
 npm exec --prefix worker -- tsc --noEmit -p worker
 npm exec --prefix worker -- eslint worker
 
+npm ci --prefix e2e
+npm exec --prefix e2e -- tsc --noEmit -p e2e
+(cd e2e && npm exec -- eslint .)
+
 mapfile -t shell_files < <(find scripts -name '*.sh' | sort)
 uvx --from shellcheck-py shellcheck "${shell_files[@]}"
