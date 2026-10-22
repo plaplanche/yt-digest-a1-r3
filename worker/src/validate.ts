@@ -1,3 +1,6 @@
+import type { TranscriptResult } from "./contracts/transcript-result";
+import { parseTranscriptResult } from "./transcript-result";
+
 // Request body checks mirroring contracts/node-*-request.schema.json, including what a type cannot express.
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
@@ -46,6 +49,26 @@ export function isHeartbeatRequest(value: unknown): value is {
 
 export function isClaimRequest(value: unknown): value is { max_jobs?: number } {
   return isObject(value) && hasOnly(value, [], ["max_jobs"]) && (value.max_jobs === undefined || isInteger(value.max_jobs, 1, 10));
+}
+
+const OUTCOMES = ["ok", "no_transcript", "unavailable", "blocked", "error"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+
+export function isResultRequest(value: unknown): value is { lease_id: string; outcome: Outcome; transcript: TranscriptResult | null } {
+  if (!isObject(value) || !hasOnly(value, ["lease_id", "outcome", "transcript"], [])) return false;
+  if (typeof value.lease_id !== "string" || value.lease_id.length < 1) return false;
+  if (!OUTCOMES.includes(value.outcome as Outcome)) return false;
+  if (value.transcript === null) return true;
+  try {
+    parseTranscriptResult(value.transcript);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isReleaseRequest(value: unknown): value is { lease_id: string } {
+  return isObject(value) && hasOnly(value, ["lease_id"], []) && typeof value.lease_id === "string" && value.lease_id.length >= 1;
 }
 
 export function isEnrollRequest(value: unknown): value is { node_id: string; owner_label: string } {

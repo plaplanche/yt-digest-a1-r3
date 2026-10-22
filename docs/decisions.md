@@ -59,3 +59,17 @@
 2026-10-22: `job.enqueued` is logged once per `POST /ops/jobs` that creates at least one job, with the count of new jobs.
 2026-10-22: The expiry sweep of 8.6 is not run yet (expiry is the next ticket), so neither `/node/*` nor `GET /ops/jobs/<video_id>` sweeps.
 2026-10-22: `stack.sh` hands each setting to `wrangler dev --var` as `NAME:value`, the only form wrangler reads (with `=` the Worker received every setting empty).
+2026-10-22: Playwright runs with one worker, because every test starts from `POST /ops/reset` on the one shared stack.
+2026-10-22: The expiry sweep of 8.6 now runs in every `/node/*` request after validation and in `GET /ops/jobs/<video_id>`; it supersedes the earlier line saying it is not run yet.
+2026-10-22: A job that becomes `done` also gets `leased_by`, `lease_id` and `lease_expires_at` set to null, as a failed or requeued one does (the transcript's R2 metadata keeps the node and lease).
+2026-10-22: The sweep expires a lease only when both the job's and the lease row's expiry are at or before now; both are written with the same value by a claim.
+2026-10-22: The status in the answer of `/node/result` is computed from the job's attempts before the write and the write is conditional on those attempts, so the stored `response_json` equals the answer.
+2026-10-22: A `node_events` row is inserted only when the job update of the same batch changed a row (`changes() > 0`), so a retry or a race records no second event; a revocation records no node event, as 6.3 has no kind for it.
+2026-10-22: The R2 write checks for an existing object with `head` and also passes `onlyIf: {etagDoesNotMatch: "*"}`, so a concurrent writer cannot overwrite either.
+2026-10-22: `GET /ops/transcripts/<video_id>` answers 404 `not_found` for an id that is not a video id.
+2026-10-22: The `reason` of `job.validation_failed` is one of `transcript_missing`, `transcript_not_null`, `status_mismatch`, `video_id_mismatch`, `pages_empty`, `word_count_mismatch`.
+2026-10-22: A `/node/result` or `/node/release` body whose `transcript` breaks the transcript-result schema is 400 `invalid_request`, before the lease check.
+2026-10-22: `job.stale_result` is logged at level `warn`, with `video_id` when the lease exists; `job.validation_failed` likewise at `warn`.
+2026-10-22: Before its R2 write a result pushes the lease expiry to now + LEASE_SECONDS (`pinLease`, conditional on the lease being active and unexpired), so a concurrent sweep cannot expire it mid-write; a lease whose `expires_at` has passed is refused by the lease check, `completed`/`rejected` ends and releases even if the sweep has not run.
+2026-10-22: `claim` leases jobs only while the node is not revoked (the UPDATE checks `nodes.revoked_at` in the same statement), so a claim racing a revocation leases nothing.
+2026-10-22: A result that wrote to R2 but then lost its lease (revoked or answered by a conflicting result mid-write) deletes the object it wrote, if its metadata still names that lease, before answering 409, unless the lease was completed by a copy of the same result.

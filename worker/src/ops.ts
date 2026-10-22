@@ -1,5 +1,6 @@
 import { sha256Hex } from "./hash";
 import { errorResponse, json, notFound, type Env } from "./http";
+import { revokeLeases, sweepExpired } from "./lease";
 import { log } from "./log";
 import { isEnqueueRequest, isEnrollRequest, VIDEO_ID } from "./validate";
 
@@ -137,6 +138,7 @@ async function enqueue(request: Request, env: Env): Promise<Response> {
 }
 
 async function jobStatus(env: Env, videoId: string): Promise<Response> {
+  await sweepExpired(env);
   const row = VIDEO_ID.test(videoId)
     ? await env.DB.prepare(
         `SELECT video_id, kind, priority, status, leased_by, lease_expires_at, attempts, tried_nodes,
@@ -149,6 +151,39 @@ async function jobStatus(env: Env, videoId: string): Promise<Response> {
     return notFound();
   }
   return json({ ...row, tried_nodes: JSON.parse(row.tried_nodes) as string[] });
+}
+
+async function revoke(env: Env, nodeId: string): Promise<Response> {
+  const node = await env.DB.prepare("SELECT revoked_at FROM nodes WHERE node_id = ?").bind(nodeId).first<{ revoked_at: string | null }>();
+  if (node === null) {
+    return notFound();
+  }
+  const now = new Date().toISOString();
+  const updated = await env.DB.prepare(
+    "UPDATE nodes SET state = 'disabled', state_since = ?2, revoked_at = ?2 WHERE node_id = ?1 AND revoked_at IS NULL RETURNING node_id",
+  )
+    .bind(nodeId, now)
+    .first();
+  const revoked = await revokeLeases(env, nodeId);
+  if (updated !== null) {
+    log("node.revoked", { attrs: { node_id: nodeId, leases_revoked: revoked } });
+  }
+  return json({ node_id: nodeId, state: "disabled" });
+}
+
+async function transcript(env: Env, videoId: string): Promise<Response> {
+  const object = VIDEO_ID.test(videoId) ? await env.TRANSCRIPTS.get(`transcripts/${videoId}.json`) : null;
+  if (object === null) {
+    return notFound();
+  }
+  const meta = object.customMetadata ?? {};
+  return json({
+    video_id: videoId,
+    transcript: JSON.parse(await object.text()) as unknown,
+    node_id: meta.node_id,
+    lease_id: meta.lease_id,
+    produced_at: meta.produced_at,
+  });
 }
 
 export async function handleOps(request: Request, env: Env, path: string): Promise<Response> {
@@ -171,6 +206,14 @@ export async function handleOps(request: Request, env: Env, path: string): Promi
   const job = request.method === "GET" ? /^\/ops\/jobs\/([^/]+)$/.exec(path) : null;
   if (job !== null) {
     return jobStatus(env, job[1]!);
+  }
+  const transcriptRoute = request.method === "GET" ? /^\/ops\/transcripts\/([^/]+)$/.exec(path) : null;
+  if (transcriptRoute !== null) {
+    return transcript(env, transcriptRoute[1]!);
+  }
+  const node = request.method === "DELETE" ? /^\/ops\/nodes\/([^/]+)$/.exec(path) : null;
+  if (node !== null) {
+    return revoke(env, node[1]!);
   }
   return notFound();
 }
