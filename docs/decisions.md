@@ -73,3 +73,11 @@
 2026-10-22: Before its R2 write a result pushes the lease expiry to now + LEASE_SECONDS (`pinLease`, conditional on the lease being active and unexpired), so a concurrent sweep cannot expire it mid-write; a lease whose `expires_at` has passed is refused by the lease check, `completed`/`rejected` ends and releases even if the sweep has not run.
 2026-10-22: `claim` leases jobs only while the node is not revoked (the UPDATE checks `nodes.revoked_at` in the same statement), so a claim racing a revocation leases nothing.
 2026-10-22: A result that wrote to R2 but then lost its lease (revoked or answered by a conflicting result mid-write) deletes the object it wrote, if its metadata still names that lease, before answering 409, unless the lease was completed by a copy of the same result.
+2026-10-22: The daemon uses `urllib` (no new dependency); a request times out after 30 s, and a timeout counts as a network error (`worker.call` status 0).
+2026-10-22: `worker.call` is logged once per HTTP request (each retry included), at `warn` when the status is not 2xx.
+2026-10-22: In the loop, a failed heartbeat or claim (other than 401) is only logged by `worker.call`; the loop goes on, a failed claim waiting `POLL_SECONDS`. Only `--once` exits 1 on them.
+2026-10-22: A result or release that fails after its retries is dropped and the daemon moves on (the lease expires on the Worker); this does not change the exit code.
+2026-10-22: `jobs_in_progress` is the number of claimed jobs not yet answered; in the loop a heartbeat is also sent between two jobs when `HEARTBEAT_SECONDS` have passed.
+2026-10-22: The bodies of `/node/result` and `/node/release` answers are not read (nothing in them is used); the heartbeat and claim answers are validated, and an invalid one counts as a failed call.
+2026-10-22: `CLAIM_BATCH` outside 1 to 10 and a non-positive `POLL_SECONDS` or `HEARTBEAT_SECONDS` exit 2 without any request, like a missing variable.
+2026-10-22: On SIGTERM or SIGINT the daemon only sets a flag; waits sleep in 0.1 s slices so the flag is seen quickly, and the job in progress (retries included) is finished before the release of the others.

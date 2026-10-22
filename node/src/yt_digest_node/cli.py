@@ -89,6 +89,26 @@ def run_transcript(
     return TranscriptResult.model_validate(result)
 
 
+def _work(parser: argparse.ArgumentParser, once: bool) -> int:
+    from yt_digest_node.daemon import Daemon, read_settings
+
+    env = dict(os.environ)
+    try:
+        settings = read_settings(env)
+        _check_limits(env)
+        extractor = make_extractor(env)
+    except ValueError as error:  # ConfigError is a ValueError
+        parser.error(str(error))
+    emit("service.started", attrs={"version": version("yt-digest-node")})
+    return Daemon(settings, env, extractor).run(once)
+
+
+def _check_limits(env: dict[str, str]) -> None:
+    for name in ("MAX_WORDS", "PAGE_WORDS"):
+        if int(env.get(name, "1")) < 1:
+            raise ValueError(f"{name} must be a positive integer")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="yt-digest-node")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -96,7 +116,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     transcript.add_argument("video_id")
     transcript.add_argument("--langs")
     transcript.add_argument("--request-id")
+    work = commands.add_parser("work")
+    work.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "work":
+        return _work(parser, once=args.once)
     if not VIDEO_ID.fullmatch(args.video_id):
         parser.error(f"invalid video id: {args.video_id!r}")
     env = dict(os.environ)
@@ -106,9 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if lang.strip()
     ]
     try:
-        for name in ("MAX_WORDS", "PAGE_WORDS"):
-            if int(env.get(name, "1")) < 1:
-                raise ValueError(f"{name} must be a positive integer")
+        _check_limits(env)
         extractor = make_extractor(env)
     except ValueError as error:
         parser.error(str(error))
