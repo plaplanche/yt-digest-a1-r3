@@ -2,7 +2,7 @@ import { sha256Hex } from "./hash";
 import { errorResponse, json, notFound, type Env } from "./http";
 import { revokeLeases, sweepExpired } from "./lease";
 import { log } from "./log";
-import { isEnqueueRequest, isEnrollRequest, VIDEO_ID } from "./validate";
+import { isEmailRequest, isEnqueueRequest, isEnrollRequest, VIDEO_ID } from "./validate";
 
 // Every table of the schema (spec lot 2, section 6.3), emptied by POST /ops/reset.
 const TABLES = [
@@ -186,6 +186,38 @@ async function transcript(env: Env, videoId: string): Promise<Response> {
   });
 }
 
+async function invite(request: Request, env: Env): Promise<Response> {
+  const data = await jsonBody(request);
+  if (!isEmailRequest(data)) {
+    return invalid();
+  }
+  const email = data.email.toLowerCase();
+  await env.DB.prepare(
+    "INSERT INTO invites (email, invited_at, revoked) VALUES (?, ?, 0) ON CONFLICT (email) DO UPDATE SET revoked = 0",
+  )
+    .bind(email, new Date().toISOString())
+    .run();
+  return json({ email, revoked: false });
+}
+
+async function revokeInvite(request: Request, env: Env): Promise<Response> {
+  const data = await jsonBody(request);
+  if (!isEmailRequest(data)) {
+    return invalid();
+  }
+  const email = data.email.toLowerCase();
+  const updated = await env.DB.prepare("UPDATE invites SET revoked = 1 WHERE email = ? RETURNING email").bind(email).first();
+  if (updated === null) {
+    return notFound();
+  }
+  return json({ email, revoked: true });
+}
+
+async function listUsers(env: Env): Promise<Response> {
+  const rows = await env.DB.prepare("SELECT user_sub, email, role FROM users ORDER BY email").all();
+  return json({ users: rows.results });
+}
+
 export async function handleOps(request: Request, env: Env, path: string): Promise<Response> {
   const token = env.OPS_TOKEN;
   if (token === undefined || token === "") {
@@ -202,6 +234,15 @@ export async function handleOps(request: Request, env: Env, path: string): Promi
   }
   if (request.method === "POST" && path === "/ops/jobs") {
     return enqueue(request, env);
+  }
+  if (request.method === "POST" && path === "/ops/invites") {
+    return invite(request, env);
+  }
+  if (request.method === "POST" && path === "/ops/invites/revoke") {
+    return revokeInvite(request, env);
+  }
+  if (request.method === "GET" && path === "/ops/users") {
+    return listUsers(env);
   }
   const job = request.method === "GET" ? /^\/ops\/jobs\/([^/]+)$/.exec(path) : null;
   if (job !== null) {
