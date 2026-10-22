@@ -1,6 +1,7 @@
 import pkg from "../package.json";
 import { json, notFound, type Env } from "./http";
 import { handleNode } from "./node";
+import { handleOAuth } from "./oauth";
 import { handleOps } from "./ops";
 
 export default {
@@ -15,6 +16,6 @@ export default {
     if (request.method === "GET" && path === "/health") {
       return json({ status: "ok", version: pkg.version });
     }
-    return notFound();
+    return (await handleOAuth(request, env, path)) ?? notFound();
   },
 } satisfies ExportedHandler<Env>;

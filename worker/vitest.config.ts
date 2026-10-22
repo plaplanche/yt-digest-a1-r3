@@ -16,7 +16,16 @@ export default defineConfig({
           cloudflareTest({
             wrangler: { configPath: path.join(import.meta.dirname, "wrangler.toml") },
             miniflare: {
-              bindings: { OPS_TOKEN: "ops-test", TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, "migrations")) },
+              bindings: {
+                OPS_TOKEN: "ops-test",
+                PUBLIC_URL: "http://worker.test",
+                GOOGLE_ISSUER: "http://google.test/google",
+                GOOGLE_CLIENT_ID: "yt-digest-test",
+                GOOGLE_CLIENT_SECRET: "google-secret-test",
+                ADMIN_EMAIL: "alice@test",
+                TOKEN_ENC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, "migrations")),
+              },
             },
           }),
         ],

@@ -54,3 +54,30 @@ export async function job(request: APIRequestContext, id: string): Promise<Recor
   expect(res.status()).toBe(200);
   return (await res.json()) as Record<string, unknown>;
 }
+
+export const workerUrl = `http://127.0.0.1:${process.env.WORKER_PORT ?? "8787"}`;
+export const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+export async function registerClient(request: APIRequestContext, redirectUri: string): Promise<string> {
+  const res = await request.post("/register", { data: { redirect_uris: [redirectUri], client_name: "E2E client" } });
+  expect(res.status()).toBe(201);
+  return ((await res.json()) as { client_id: string }).client_id;
+}
+
+export function authorizeUrl(clientId: string, redirectUri: string, overrides: Record<string, string> = {}): string {
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    resource: `${workerUrl}/mcp`,
+    state: "st-e2e",
+    ...overrides,
+  });
+  return `/authorize?${query}`;
+}
+
+export async function invite(request: APIRequestContext, email: string): Promise<void> {
+  expect((await request.post("/ops/invites", { headers: ops, data: { email } })).status()).toBe(200);
+}
