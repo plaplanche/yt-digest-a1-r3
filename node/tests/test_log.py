@@ -30,3 +30,15 @@ def test_unknown_field_raises() -> None:
 def test_unknown_level_raises() -> None:
     with pytest.raises(ValueError):
         emit("service.started", level="loud")
+
+
+def test_lot2_event_is_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+    emit("worker.call", attrs={"endpoint": "claim", "status": 200, "duration_ms": 12})
+    assert json.loads(capsys.readouterr().err)["event"] == "worker.call"
+
+
+def test_lot2_worker_event_is_in_the_catalogue(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    emit("job.claimed", video_id="dQw4w9WgXcQ")
+    assert json.loads(capsys.readouterr().err)["event"] == "job.claimed"
