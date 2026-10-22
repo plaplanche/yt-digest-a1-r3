@@ -83,6 +83,10 @@ export function isEnrollRequest(value: unknown): value is { node_id: string; own
   );
 }
 
+export function isEmailRequest(value: unknown): value is { email: string } {
+  return isObject(value) && hasOnly(value, ["email"], []) && typeof value.email === "string" && value.email.includes("@");
+}
+
 export function isEnqueueRequest(value: unknown): value is { video_ids: string[]; priority?: number } {
   return (
     isObject(value) &&

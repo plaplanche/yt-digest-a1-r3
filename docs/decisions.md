@@ -81,3 +81,6 @@
 2026-10-22: The bodies of `/node/result` and `/node/release` answers are not read (nothing in them is used); the heartbeat and claim answers are validated, and an invalid one counts as a failed call.
 2026-10-22: `CLAIM_BATCH` outside 1 to 10 and a non-positive `POLL_SECONDS` or `HEARTBEAT_SECONDS` exit 2 without any request, like a missing variable.
 2026-10-22: On SIGTERM or SIGINT the daemon only sets a flag; waits sleep in 0.1 s slices so the flag is seen quickly, and the job in progress (retries included) is finished before the release of the others.
+2026-10-22: The fake Google rejects a token request whose client authentication is missing or wrong with 401 before looking at the grant; Basic credentials are percent-decoded, and a `/google/revoke` request is answered 200 with an empty body whatever it holds.
+2026-10-22: The fake Google's refresh tokens are not rotated and live as long as the mocks server; every access token it issued stays valid for userinfo until the server stops.
+2026-10-22: `POST /ops/invites` and its revoke twin emit no log event (the catalogue has none) and reject extra body fields with 400 `invalid_request`.
