@@ -197,6 +197,27 @@ describe("POST /token, refresh_token (10.5)", () => {
     for (const secret of [first.access_token, first.refresh_token, second.refresh_token]) expect(all).not.toContain(secret);
   });
 
+  test("a reuse revoking the family between the marking and the insert of a rotation leaves no valid pair", async () => {
+    const first = await pair();
+    const realBatch = env.DB.batch.bind(env.DB);
+    let raced = false;
+    const spy = vi.spyOn(env.DB, "batch").mockImplementation(async (statements) => {
+      if (!raced && statements.length === 2) {
+        raced = true;
+        // The reuse detection of a concurrent request wins the race for the family.
+        await env.DB.prepare("UPDATE oauth_tokens SET revoked_at = ? WHERE family_id = (SELECT family_id FROM oauth_tokens WHERE kind = 'refresh') AND revoked_at IS NULL")
+          .bind(new Date().toISOString())
+          .run();
+      }
+      return realBatch(statements);
+    });
+    await expectError(await refresh(first.refresh_token), 400, "invalid_grant");
+    spy.mockRestore();
+    const rows = await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_tokens WHERE revoked_at IS NULL").first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+    expect(await check(first.access_token)).toEqual({ ok: false, reason: "revoked" });
+  });
+
   test("unknown, expired, revoked, access and other-client refresh tokens are invalid_grant", async () => {
     const p = await pair();
     await expectError(await refresh("unknown"), 400, "invalid_grant");

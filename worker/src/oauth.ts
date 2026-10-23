@@ -433,18 +433,52 @@ interface TokenRow {
   scope: string;
   resource: string;
   used_at: string | null;
+  revoked_at: string | null;
+  expires_at: string;
 }
 
 // Stores a new access and refresh token pair of a family and builds the 200 answer.
-async function issuePair(env: Env, grantType: string, clientId: string, userSub: string, familyId: string, scope: string, resource: string): Promise<Response> {
+// With `rotated`, the pair is stored in the same batch as the marking of the used refresh token,
+// and only if that marking changed a row and the family is not revoked: a concurrent reuse
+// detection cannot leave a valid pair behind. Returns null when nothing was stored.
+async function issuePair(
+  env: Env,
+  grantType: string,
+  clientId: string,
+  userSub: string,
+  familyId: string,
+  scope: string,
+  resource: string,
+  rotated?: { hash: string; now: string },
+): Promise<Response | null> {
   const accessTtl = ttl(env.ACCESS_TOKEN_TTL_SECONDS, 3600);
   const access = randomToken();
   const refresh = randomToken();
-  const insert = "INSERT INTO oauth_tokens (token_hash, kind, client_id, user_sub, family_id, scope, resource, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-  await env.DB.batch([
-    env.DB.prepare(insert).bind(await sha256Hex(access), "access", clientId, userSub, familyId, scope, resource, inSeconds(accessTtl)),
-    env.DB.prepare(insert).bind(await sha256Hex(refresh), "refresh", clientId, userSub, familyId, scope, resource, inSeconds(ttl(env.REFRESH_TOKEN_TTL_SECONDS, 2592000))),
-  ]);
+  const values = [clientId, userSub, familyId, scope, resource];
+  const accessAt = inSeconds(accessTtl);
+  const refreshAt = inSeconds(ttl(env.REFRESH_TOKEN_TTL_SECONDS, 2592000));
+  if (rotated === undefined) {
+    const insert = "INSERT INTO oauth_tokens (token_hash, kind, client_id, user_sub, family_id, scope, resource, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    await env.DB.batch([
+      env.DB.prepare(insert).bind(await sha256Hex(access), "access", ...values, accessAt),
+      env.DB.prepare(insert).bind(await sha256Hex(refresh), "refresh", ...values, refreshAt),
+    ]);
+  } else {
+    const results = await env.DB.batch([
+      env.DB.prepare("UPDATE oauth_tokens SET used_at = ? WHERE token_hash = ? AND kind = 'refresh' AND used_at IS NULL AND revoked_at IS NULL")
+        .bind(rotated.now, rotated.hash),
+      env.DB.prepare(
+        `INSERT INTO oauth_tokens (token_hash, kind, client_id, user_sub, family_id, scope, resource, expires_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM oauth_tokens WHERE family_id = ? AND revoked_at IS NOT NULL)
+         UNION ALL
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM oauth_tokens WHERE family_id = ? AND revoked_at IS NOT NULL)`,
+      ).bind(
+        await sha256Hex(access), "access", ...values, accessAt, familyId,
+        await sha256Hex(refresh), "refresh", ...values, refreshAt, familyId,
+      ),
+    ]);
+    if (results[1]!.meta.changes !== 2) return null;
+  }
   log("auth.token.issued", { attrs: { client_id: clientId, grant_type: grantType } });
   return noStore(json({ access_token: access, token_type: "Bearer", expires_in: accessTtl, refresh_token: refresh, scope }));
 }
@@ -476,7 +510,7 @@ async function codeGrant(form: URLSearchParams, env: Env, clientId: string): Pro
   if (row === null || row.expires_at <= now || row.client_id !== clientId || row.redirect_uri !== redirectUri || row.code_challenge !== challenge) {
     return oauthError(400, "invalid_grant", "The authorization code is invalid");
   }
-  return issuePair(env, "authorization_code", clientId, row.user_sub, randomToken(), row.scope, row.resource);
+  return (await issuePair(env, "authorization_code", clientId, row.user_sub, randomToken(), row.scope, row.resource))!;
 }
 
 async function refreshGrant(form: URLSearchParams, env: Env, clientId: string): Promise<Response> {
@@ -487,26 +521,28 @@ async function refreshGrant(form: URLSearchParams, env: Env, clientId: string): 
 
   const now = nowIso();
   const hash = await sha256Hex(refreshToken);
-  const row = await env.DB.prepare(
-    "UPDATE oauth_tokens SET used_at = ? WHERE token_hash = ? AND kind = 'refresh' AND client_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ? RETURNING *",
-  )
-    .bind(now, hash, clientId, now)
-    .first<TokenRow>();
-  if (row === null) {
-    const old = await env.DB.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ? AND kind = 'refresh' AND client_id = ?").bind(hash, clientId).first<TokenRow>();
-    if (old !== null && old.used_at !== null) {
-      const revoked = await env.DB.prepare("UPDATE oauth_tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL RETURNING token_hash")
-        .bind(now, old.family_id)
-        .all();
-      log("auth.refresh.reuse_detected", { level: "warn", attrs: { client_id: clientId, revoked: revoked.results.length } });
-    }
-    return oauthError(400, "invalid_grant", "The refresh token is invalid");
+  const invalid = () => oauthError(400, "invalid_grant", "The refresh token is invalid");
+  const row = await env.DB.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ? AND kind = 'refresh' AND client_id = ?").bind(hash, clientId).first<TokenRow>();
+  if (row === null) return invalid();
+  // Revokes the whole family, access tokens included.
+  const revokeFamily = async (): Promise<number> =>
+    (await env.DB.prepare("UPDATE oauth_tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL RETURNING token_hash").bind(now, row.family_id).all()).results.length;
+  if (row.used_at !== null) {
+    const revoked = await revokeFamily();
+    log("auth.refresh.reuse_detected", { level: "warn", attrs: { client_id: clientId, revoked } });
+    return invalid();
   }
-  return issuePair(env, "refresh_token", clientId, row.user_sub, row.family_id, row.scope, row.resource);
+  if (row.revoked_at !== null || row.expires_at <= now) return invalid();
+  const issued = await issuePair(env, "refresh_token", clientId, row.user_sub, row.family_id, row.scope, row.resource, { hash, now });
+  if (issued !== null) return issued;
+  // Nothing was stored: a concurrent request used the token or revoked the family first.
+  const revoked = await revokeFamily();
+  if (revoked > 0) log("auth.refresh.reuse_detected", { level: "warn", attrs: { client_id: clientId, revoked } });
+  return invalid();
 }
 
 async function token(request: Request, env: Env): Promise<Response> {
-  if (!(request.headers.get("Content-Type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+  if ((request.headers.get("Content-Type") ?? "").split(";")[0]!.trim().toLowerCase() !== "application/x-www-form-urlencoded") {
     return noStore(oauthError(400, "invalid_request", "The body must be form-encoded"));
   }
   const form = new URLSearchParams(new TextDecoder().decode(await request.arrayBuffer()));
