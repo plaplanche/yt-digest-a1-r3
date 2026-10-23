@@ -52,6 +52,8 @@ paths = ["worker/**", "contracts/**", "scripts/**"]
 name = "e2e"
 command = ["./scripts/check.sh", "e2e"]
 paths = ["e2e/**", "worker/**", "node/**", "contracts/**", "scripts/**", "ci/**"]
+# The browser project runs only in CI (no Chromium where the agent works, spec 3.1).
+not_run_locally = ["e2e/**/*browser*"]
 
 [definition_of_done]
 items = [
