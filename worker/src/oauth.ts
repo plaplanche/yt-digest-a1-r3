@@ -418,6 +418,171 @@ async function callback(url: URL, env: Env): Promise<Response> {
   return redirectTo(pending.redirect_uri, { code: authCode, state: pending.client_state });
 }
 
+// 10.5
+
+function noStore(response: Response): Response {
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
+
+interface TokenRow {
+  token_hash: string;
+  client_id: string;
+  user_sub: string;
+  family_id: string;
+  scope: string;
+  resource: string;
+  used_at: string | null;
+  revoked_at: string | null;
+  expires_at: string;
+}
+
+// Stores a new access and refresh token pair of a family and builds the 200 answer.
+// With `rotated`, the pair is stored in the same batch as the marking of the used refresh token,
+// and only if that marking changed a row and the family is not revoked: a concurrent reuse
+// detection cannot leave a valid pair behind. Returns null when nothing was stored.
+async function issuePair(
+  env: Env,
+  grantType: string,
+  clientId: string,
+  userSub: string,
+  familyId: string,
+  scope: string,
+  resource: string,
+  rotated?: { hash: string; now: string },
+): Promise<Response | null> {
+  const accessTtl = ttl(env.ACCESS_TOKEN_TTL_SECONDS, 3600);
+  const access = randomToken();
+  const refresh = randomToken();
+  const values = [clientId, userSub, familyId, scope, resource];
+  const accessAt = inSeconds(accessTtl);
+  const refreshAt = inSeconds(ttl(env.REFRESH_TOKEN_TTL_SECONDS, 2592000));
+  if (rotated === undefined) {
+    const insert = "INSERT INTO oauth_tokens (token_hash, kind, client_id, user_sub, family_id, scope, resource, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    await env.DB.batch([
+      env.DB.prepare(insert).bind(await sha256Hex(access), "access", ...values, accessAt),
+      env.DB.prepare(insert).bind(await sha256Hex(refresh), "refresh", ...values, refreshAt),
+    ]);
+  } else {
+    const results = await env.DB.batch([
+      env.DB.prepare("UPDATE oauth_tokens SET used_at = ? WHERE token_hash = ? AND kind = 'refresh' AND used_at IS NULL AND revoked_at IS NULL")
+        .bind(rotated.now, rotated.hash),
+      env.DB.prepare(
+        `INSERT INTO oauth_tokens (token_hash, kind, client_id, user_sub, family_id, scope, resource, expires_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM oauth_tokens WHERE family_id = ? AND revoked_at IS NOT NULL)
+         UNION ALL
+         SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM oauth_tokens WHERE family_id = ? AND revoked_at IS NOT NULL)`,
+      ).bind(
+        await sha256Hex(access), "access", ...values, accessAt, familyId,
+        await sha256Hex(refresh), "refresh", ...values, refreshAt, familyId,
+      ),
+    ]);
+    if (results[1]!.meta.changes !== 2) return null;
+  }
+  log("auth.token.issued", { attrs: { client_id: clientId, grant_type: grantType } });
+  return noStore(json({ access_token: access, token_type: "Bearer", expires_in: accessTtl, refresh_token: refresh, scope }));
+}
+
+interface CodeRow {
+  client_id: string;
+  user_sub: string;
+  redirect_uri: string;
+  code_challenge: string;
+  scope: string;
+  resource: string;
+  expires_at: string;
+}
+
+async function codeGrant(form: URLSearchParams, env: Env, clientId: string): Promise<Response> {
+  const code = form.get("code");
+  const redirectUri = form.get("redirect_uri");
+  const verifier = form.get("code_verifier");
+  const resource = form.get("resource");
+  if (!code || !redirectUri || !verifier || !resource) return oauthError(400, "invalid_request", "Missing parameter");
+  if (resource !== `${base(env)}/mcp`) return oauthError(400, "invalid_target", "Unknown resource");
+
+  const now = nowIso();
+  // The code is used up by the first exchange that reaches this check.
+  const row = await env.DB.prepare("UPDATE oauth_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL RETURNING *")
+    .bind(now, await sha256Hex(code))
+    .first<CodeRow>();
+  const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  if (row === null || row.expires_at <= now || row.client_id !== clientId || row.redirect_uri !== redirectUri || row.code_challenge !== challenge) {
+    return oauthError(400, "invalid_grant", "The authorization code is invalid");
+  }
+  return (await issuePair(env, "authorization_code", clientId, row.user_sub, randomToken(), row.scope, row.resource))!;
+}
+
+async function refreshGrant(form: URLSearchParams, env: Env, clientId: string): Promise<Response> {
+  const refreshToken = form.get("refresh_token");
+  if (!refreshToken) return oauthError(400, "invalid_request", "Missing parameter");
+  const resource = form.get("resource");
+  if (resource !== null && resource !== `${base(env)}/mcp`) return oauthError(400, "invalid_target", "Unknown resource");
+
+  const now = nowIso();
+  const hash = await sha256Hex(refreshToken);
+  const invalid = () => oauthError(400, "invalid_grant", "The refresh token is invalid");
+  const row = await env.DB.prepare("SELECT * FROM oauth_tokens WHERE token_hash = ? AND kind = 'refresh' AND client_id = ?").bind(hash, clientId).first<TokenRow>();
+  if (row === null) return invalid();
+  // Revokes the whole family, access tokens included.
+  const revokeFamily = async (): Promise<number> =>
+    (await env.DB.prepare("UPDATE oauth_tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL RETURNING token_hash").bind(now, row.family_id).all()).results.length;
+  if (row.used_at !== null) {
+    const revoked = await revokeFamily();
+    log("auth.refresh.reuse_detected", { level: "warn", attrs: { client_id: clientId, revoked } });
+    return invalid();
+  }
+  if (row.revoked_at !== null || row.expires_at <= now) return invalid();
+  const issued = await issuePair(env, "refresh_token", clientId, row.user_sub, row.family_id, row.scope, row.resource, { hash, now });
+  if (issued !== null) return issued;
+  // Nothing was stored: a concurrent request used the token or revoked the family first.
+  const revoked = await revokeFamily();
+  if (revoked > 0) log("auth.refresh.reuse_detected", { level: "warn", attrs: { client_id: clientId, revoked } });
+  return invalid();
+}
+
+async function token(request: Request, env: Env): Promise<Response> {
+  if ((request.headers.get("Content-Type") ?? "").split(";")[0]!.trim().toLowerCase() !== "application/x-www-form-urlencoded") {
+    return noStore(oauthError(400, "invalid_request", "The body must be form-encoded"));
+  }
+  const form = new URLSearchParams(new TextDecoder().decode(await request.arrayBuffer()));
+  const grantType = form.get("grant_type");
+  if (grantType !== "authorization_code" && grantType !== "refresh_token") {
+    return noStore(oauthError(400, "unsupported_grant_type", "Unsupported grant type"));
+  }
+  const clientId = form.get("client_id");
+  const client = clientId ? await env.DB.prepare("SELECT client_id FROM oauth_clients WHERE client_id = ?").bind(clientId).first() : null;
+  if (clientId === null || client === null) return noStore(oauthError(401, "invalid_client", "Unknown client"));
+  return noStore(await (grantType === "authorization_code" ? codeGrant(form, env, clientId) : refreshGrant(form, env, clientId)));
+}
+
+// 10.6
+
+export interface AccessUser {
+  user_sub: string;
+  email: string;
+  role: "admin" | "member";
+}
+
+export type AccessCheck = { ok: true; user: AccessUser } | { ok: false; reason: "missing" | "unknown" | "expired" | "revoked" };
+
+// The user is read again on every call, so that revoking an invite refuses their tokens at once.
+export async function checkAccessToken(request: Request, env: Env): Promise<AccessCheck> {
+  const match = /^Bearer (\S+)$/i.exec(request.headers.get("Authorization") ?? "");
+  if (match === null) return { ok: false, reason: "missing" };
+  const row = await env.DB.prepare("SELECT user_sub, resource, expires_at, revoked_at FROM oauth_tokens WHERE token_hash = ? AND kind = 'access'")
+    .bind(await sha256Hex(match[1]!))
+    .first<{ user_sub: string; resource: string; expires_at: string; revoked_at: string | null }>();
+  if (row === null || row.resource !== `${base(env)}/mcp`) return { ok: false, reason: "unknown" };
+  if (row.revoked_at !== null) return { ok: false, reason: "revoked" };
+  if (row.expires_at <= nowIso()) return { ok: false, reason: "expired" };
+  const user = await env.DB.prepare("SELECT user_sub, email FROM users WHERE user_sub = ?").bind(row.user_sub).first<{ user_sub: string; email: string }>();
+  if (user === null) return { ok: false, reason: "revoked" };
+  if (user.email.toLowerCase() === (env.ADMIN_EMAIL ?? "").toLowerCase()) return { ok: true, user: { ...user, role: "admin" } };
+  const invite = await env.DB.prepare("SELECT email FROM invites WHERE email = ? AND revoked = 0").bind(user.email.toLowerCase()).first();
+  return invite === null ? { ok: false, reason: "revoked" } : { ok: true, user: { ...user, role: "member" } };
+}
+
 export async function handleOAuth(request: Request, env: Env, path: string): Promise<Response | null> {
   const url = new URL(request.url);
   if (request.method === "GET") {
@@ -434,6 +599,7 @@ export async function handleOAuth(request: Request, env: Env, path: string): Pro
     }
   } else if (request.method === "POST") {
     if (path === "/register") return register(request, env);
+    if (path === "/token") return token(request, env);
     if (path === "/authorize/consent") return consent(request, env);
   }
   return null;
