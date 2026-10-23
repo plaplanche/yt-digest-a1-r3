@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { ops, reset } from "./support";
 
@@ -85,4 +86,40 @@ test("the consent page, then the fake Google sign-in, lead an invited user back 
   expect(((await users.json()) as { users: { email: string; role: string }[] }).users).toEqual([
     expect.objectContaining({ email: "bob@test", role: "member" }),
   ]);
+});
+
+test("E2E-31: refresh rotation, and the reuse of an old refresh token revokes the family", async ({ request }) => {
+  await request.post("/ops/invites", { headers: ops, data: { email: "bob@test" } });
+  const { client_id, base } = await register(request);
+  const verifier = "e2e-verifier-e2e-verifier-e2e-verifier-0123456789";
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+
+  const page = await request.get(authorizeUrl(client_id, base, { code_challenge: challenge }));
+  const requestId = /name="request" value="([^"]+)"/.exec(await page.text())![1]!;
+  const approve = await request.post("/authorize/consent", { form: { request: requestId, decision: "approve" }, maxRedirects: 0 });
+  const googleUrl = new URL(approve.headers().location!);
+  googleUrl.searchParams.set("login_hint", "bob@test");
+  const back = await request.get(googleUrl.toString(), { maxRedirects: 0 });
+  const done = await request.get(back.headers().location!, { maxRedirects: 0 });
+  const code = new URL(done.headers().location!).searchParams.get("code")!;
+
+  const tokens = async (form: Record<string, string>) => request.post("/token", { form: { client_id, ...form } });
+  const first = await tokens({ grant_type: "authorization_code", code, redirect_uri: redirectUri, code_verifier: verifier, resource: `${base}/mcp` });
+  expect(first.status()).toBe(200);
+  expect(first.headers()["cache-control"]).toBe("no-store");
+  const one = (await first.json()) as { access_token: string; refresh_token: string };
+
+  const second = await tokens({ grant_type: "refresh_token", refresh_token: one.refresh_token });
+  expect(second.status()).toBe(200);
+  const two = (await second.json()) as { access_token: string; refresh_token: string };
+  expect(two.refresh_token).not.toBe(one.refresh_token);
+
+  const reuse = await tokens({ grant_type: "refresh_token", refresh_token: one.refresh_token });
+  expect(reuse.status()).toBe(400);
+  expect(((await reuse.json()) as { error: string }).error).toBe("invalid_grant");
+
+  // The family is revoked: the newest refresh token is refused too.
+  const after = await tokens({ grant_type: "refresh_token", refresh_token: two.refresh_token });
+  expect(after.status()).toBe(400);
+  expect(((await after.json()) as { error: string }).error).toBe("invalid_grant");
 });
