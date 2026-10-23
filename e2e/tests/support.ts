@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, type APIRequestContext } from "@playwright/test";
 
 export const ops = { Authorization: `Bearer ${process.env.OPS_TOKEN ?? "ops-local"}` };
@@ -53,4 +54,49 @@ export async function job(request: APIRequestContext, id: string): Promise<Recor
   const res = await request.get(`/ops/jobs/${id}`, { headers: ops });
   expect(res.status()).toBe(200);
   return (await res.json()) as Record<string, unknown>;
+}
+
+export interface McpSession {
+  base: string;
+  accessToken: string;
+}
+
+// Runs the whole OAuth dance of an invited user through the API only, without a browser.
+export async function mcpLogin(request: APIRequestContext, email: string): Promise<McpSession> {
+  const redirectUri = "http://127.0.0.1:9/cb";
+  await request.post("/ops/invites", { headers: ops, data: { email } });
+  const registered = await request.post("/register", { data: { redirect_uris: [redirectUri], client_name: "E2E client" } });
+  const base = new URL(registered.url()).origin;
+  const clientId = ((await registered.json()) as { client_id: string }).client_id;
+  const verifier = "e2e-verifier-e2e-verifier-e2e-verifier-0123456789";
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    resource: `${base}/mcp`,
+    state: "st",
+  });
+  const page = await request.get(`/authorize?${query}`);
+  const requestId = /name="request" value="([^"]+)"/.exec(await page.text())![1]!;
+  const approve = await request.post("/authorize/consent", { form: { request: requestId, decision: "approve" }, maxRedirects: 0 });
+  const googleUrl = new URL(approve.headers().location!);
+  googleUrl.searchParams.set("login_hint", email);
+  const back = await request.get(googleUrl.toString(), { maxRedirects: 0 });
+  const done = await request.get(back.headers().location!, { maxRedirects: 0 });
+  const code = new URL(done.headers().location!).searchParams.get("code")!;
+  const issued = await request.post("/token", {
+    form: { grant_type: "authorization_code", client_id: clientId, code, redirect_uri: redirectUri, code_verifier: verifier, resource: `${base}/mcp` },
+  });
+  expect(issued.status()).toBe(200);
+  return { base, accessToken: ((await issued.json()) as { access_token: string }).access_token };
+}
+
+export function mcp(request: APIRequestContext, token: string | null, message: unknown) {
+  return request.post("/mcp", {
+    headers: { Accept: "application/json, text/event-stream", ...(token === null ? {} : bearer(token)) },
+    data: message,
+  });
 }

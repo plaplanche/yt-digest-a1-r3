@@ -1,5 +1,6 @@
 import pkg from "../package.json";
 import { json, notFound, type Env } from "./http";
+import { handleMcp } from "./mcp";
 import { handleNode } from "./node";
 import { handleOAuth } from "./oauth";
 import { handleOps } from "./ops";
@@ -12,6 +13,9 @@ export default {
     }
     if (path.startsWith("/node/")) {
       return handleNode(request, env, path);
+    }
+    if (path === "/mcp") {
+      return handleMcp(request, env);
     }
     const oauth = await handleOAuth(request, env, path);
     if (oauth !== null) return oauth;
