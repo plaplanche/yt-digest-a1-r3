@@ -1,6 +1,7 @@
 import pkg from "../package.json";
 import { json, notFound, type Env } from "./http";
 import { handleNode } from "./node";
+import { handleOAuth } from "./oauth";
 import { handleOps } from "./ops";
 
 export default {
@@ -12,6 +13,8 @@ export default {
     if (path.startsWith("/node/")) {
       return handleNode(request, env, path);
     }
+    const oauth = await handleOAuth(request, env, path);
+    if (oauth !== null) return oauth;
     if (request.method === "GET" && path === "/health") {
       return json({ status: "ok", version: pkg.version });
     }
