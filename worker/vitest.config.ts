@@ -23,6 +23,7 @@ export default defineConfig({
                 GOOGLE_CLIENT_ID: "yt-digest-test",
                 GOOGLE_CLIENT_SECRET: "google-secret-test",
                 ADMIN_EMAIL: "alice@test",
+                ALLOWED_ORIGINS: "http://allowed.test, http://other.test/",
                 TOKEN_ENC_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
  TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, "migrations")),
               },
